@@ -38,6 +38,11 @@ inline uint64_t json_int_field(const std::string& object, const std::string& key
     return fallback;
 }
 
+inline bool json_has_int_field(const std::string& object, const std::string& key) {
+    std::regex re("\\\"" + key + "\\\"\\s*:\\s*\\\"?(0x[0-9A-Fa-f]+|[0-9]+)\\\"?");
+    return std::regex_search(object, re);
+}
+
 inline bool json_bool_field(const std::string& object, const std::string& key, bool fallback = false) {
     std::regex re("\\\"" + key + "\\\"\\s*:\\s*(true|false|1|0)", std::regex::icase);
     std::smatch m;
@@ -84,8 +89,11 @@ inline std::vector<DataSlot> parse_data_json(const std::filesystem::path& path) 
     const auto text = read_text_file(path);
     for (const auto& obj : json_object_fragments(text)) {
         const auto id = json_int_field(obj, "id", UINT64_MAX);
+        const bool has_address = json_has_int_field(obj, "address") ||
+                                 json_has_int_field(obj, "load_address") ||
+                                 json_has_int_field(obj, "bridge_address");
         const auto address = json_int_field(obj, "address", json_int_field(obj, "load_address", json_int_field(obj, "bridge_address", 0)));
-        if (id == UINT64_MAX || address == 0) continue;
+        if (id == UINT64_MAX || !has_address) continue;
         DataSlot slot;
         slot.id = static_cast<uint16_t>(id);
         slot.name = json_string_field(obj, "name");

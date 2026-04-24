@@ -31,6 +31,7 @@ struct AudioStats {
 class AudioCapture {
 public:
     void set_wav_path(std::filesystem::path path) { wav_path_ = std::move(path); }
+    void set_stats_path(std::filesystem::path path) { stats_path_ = std::move(path); }
     void set_expected_sample_rate(uint32_t hz) { expected_sample_rate_ = hz; }
 
     template <typename Top>
@@ -43,10 +44,22 @@ public:
     void finish() {
         stats_ = compute_stats();
         if (!wav_path_.empty()) write_wav(wav_path_);
+        if (!stats_path_.empty()) write_stats_json(stats_path_);
     }
 
     const AudioStats& stats() const { return stats_; }
     size_t sample_count() const { return samples_.size(); }
+
+    void reset_capture() {
+        current_lrck_ = false;
+        shift_ = 0;
+        bit_count_ = 0;
+        pending_left_ = 0;
+        have_left_ = false;
+        samples_.clear();
+        stats_ = {};
+        stats_.sample_rate = expected_sample_rate_;
+    }
 
 private:
     void on_mclk(bool lrck, bool bit) {
@@ -131,7 +144,26 @@ private:
         }
     }
 
+    void write_stats_json(const std::filesystem::path& path) const {
+        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+        std::ofstream out(path);
+        if (!out) return;
+        out << "{\n";
+        out << "  \"sample_rate\": " << stats_.sample_rate << ",\n";
+        out << "  \"channels\": 2,\n";
+        out << "  \"samples\": " << stats_.samples << ",\n";
+        out << "  \"min_l\": " << stats_.min_l << ",\n";
+        out << "  \"max_l\": " << stats_.max_l << ",\n";
+        out << "  \"min_r\": " << stats_.min_r << ",\n";
+        out << "  \"max_r\": " << stats_.max_r << ",\n";
+        out << "  \"dc_offset_l\": " << stats_.dc_offset_l << ",\n";
+        out << "  \"dc_offset_r\": " << stats_.dc_offset_r << ",\n";
+        out << "  \"clipped_samples\": " << stats_.clipped_samples << "\n";
+        out << "}\n";
+    }
+
     std::filesystem::path wav_path_;
+    std::filesystem::path stats_path_;
     uint32_t expected_sample_rate_ = 48000;
     bool prev_mclk_ = false;
     bool current_lrck_ = false;

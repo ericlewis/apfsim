@@ -6,7 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <functional>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -30,6 +30,18 @@ public:
     }
 
     void set_verbose(bool verbose) { verbose_ = verbose; }
+    void set_write_idle_cycles(uint64_t cycles) { write_idle_cycles_ = cycles; }
+    void set_log_path(const std::filesystem::path& path) {
+        if (path.empty()) return;
+        if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+        log_.open(path);
+        if (log_) log_ << "apfsim bridge log\n";
+    }
+
+    uint16_t last_host_command() const { return last_host_command_; }
+    uint16_t last_host_result() const { return last_host_result_; }
+    uint32_t last_host_status_word() const { return last_host_status_word_; }
+    uint32_t last_target_word() const { return last_target_word_; }
 
     void idle_cycles(uint64_t n) {
         top_->bridge_rd = 0;
@@ -83,6 +95,9 @@ public:
     }
 
     uint16_t host_command(uint16_t cmd, uint32_t p0 = 0, uint32_t p1 = 0, uint32_t p2 = 0, uint32_t p3 = 0, int timeout_polls = 1000) {
+        last_host_command_ = cmd;
+        log_event("HOST CM " + std::string(apf::command_name(cmd)) + " cmd=" + hex32(cmd) +
+                  " p0=" + hex32(p0) + " p1=" + hex32(p1) + " p2=" + hex32(p2) + " p3=" + hex32(p3));
         write32(apf::kCommandBase + apf::kHostParam0Offset, p0);
         write32(apf::kCommandBase + apf::kHostParam1Offset, p1);
         write32(apf::kCommandBase + apf::kHostParam2Offset, p2);
@@ -90,13 +105,17 @@ public:
         write32(apf::kCommandBase + apf::kHostStatusOffset, apf::magic_cmd(cmd));
         for (int i = 0; i < timeout_polls; ++i) {
             const uint32_t status = read32(apf::kCommandBase + apf::kHostStatusOffset);
+            last_host_status_word_ = status;
             if (apf::is_ok(status)) {
                 const uint16_t result = apf::low16(status);
+                last_host_result_ = result;
                 if (verbose_) std::cout << "APF host command " << apf::command_name(cmd) << " -> " << result << "\n";
+                log_event("HOST OK " + std::string(apf::command_name(cmd)) + " result=" + hex32(result));
                 return result;
             }
             idle_cycles(1);
         }
+        log_event("HOST TIMEOUT " + std::string(apf::command_name(cmd)));
         throw std::runtime_error("APF host command timed out: " + std::to_string(cmd));
     }
 
@@ -117,8 +136,11 @@ public:
     void wait_target_ready_to_run(int timeout_polls = 5000) {
         for (int i = 0; i < timeout_polls; ++i) {
             const uint32_t word = read32(apf::kTargetBase);
+            last_target_word_ = word;
             if ((apf::is_target_cmd(word) || apf::is_cmd(word)) && apf::low16(word) == apf::kTargetReadyToRun) {
+                log_event("TARGET CM Ready to Run word=" + hex32(word));
                 write32(apf::kTargetBase, apf::target_magic_ok(0));
+                log_event("TARGET OK Ready to Run");
                 return;
             }
             idle_cycles(8);
@@ -127,6 +149,7 @@ public:
     }
 
     void populate_slot_table(const std::vector<DataSlot>& slots) {
+        log_event("DATASLOT table populate entries=" + std::to_string(slots.size()));
         for (size_t i = 0; i < 32; ++i) {
             write32(apf::kDataSlotTableBase + static_cast<uint32_t>(i * 8), 0);
             write32(apf::kDataSlotTableBase + static_cast<uint32_t>(i * 8 + 4), 0);
@@ -147,8 +170,11 @@ public:
             throw std::runtime_error("slot " + std::to_string(slot.id) + " exceeds maximum size");
         }
         slot.loaded_size = bytes.size();
+        log_event("DATASLOT load begin id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) +
+                  " address=" + hex32(slot.address) + " file=" + slot.file.string());
         host_command(apf::kDataSlotRequestWrite, slot.id, static_cast<uint32_t>(bytes.size()), slot.address, 0);
         burst_write(slot.address, bytes);
+        log_event("DATASLOT load done id=" + std::to_string(slot.id) + " writes32=" + std::to_string((bytes.size() + 3) / 4));
         std::cout << "PASS data: slot " << slot.id << " loaded " << bytes.size() << " bytes at " << hex32(slot.address) << "\n";
     }
 
@@ -160,6 +186,7 @@ public:
             const auto bytes = burst_read(slot.address, slot.loaded_size);
             const auto path = dir / ("slot_" + std::to_string(slot.id) + ".bin");
             write_binary_file(path, bytes);
+            log_event("SAVE unload id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) + " path=" + path.string());
             std::cout << "PASS save: slot " << slot.id << " unloaded " << bytes.size() << " bytes\n";
         }
     }
@@ -167,11 +194,20 @@ public:
     void set_read_latency_cycles(uint64_t cycles) { read_latency_cycles_ = cycles; }
 
 private:
+    void log_event(const std::string& msg) {
+        if (log_) log_ << msg << "\n";
+    }
+
     Top* top_ = nullptr;
     CycleFn cycle_fn_;
     uint64_t read_latency_cycles_ = 2;
     uint64_t write_idle_cycles_ = 1;
     bool verbose_ = false;
+    std::ofstream log_;
+    uint16_t last_host_command_ = 0;
+    uint16_t last_host_result_ = 0;
+    uint32_t last_host_status_word_ = 0;
+    uint32_t last_target_word_ = 0;
 };
 
 template <typename Top>

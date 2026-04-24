@@ -1,0 +1,13 @@
+name: agg23_core_template_boot
+data_slots: []
+inputs: []
+run:
+  until_frames: 3
+  timeout_cycles: 10000000
+expect:
+  status: running
+  video:
+    active_width: 320
+    active_height: 240
+  audio:
+    min_samples: 64

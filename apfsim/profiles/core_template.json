@@ -1,0 +1,31 @@
+{
+  "name": "core_template",
+  "description": "agg23 openFPGA APF core template smoke test",
+  "external": true,
+  "root_env": "TEMPLATE_ROOT",
+  "root_default": "/Users/ericlewis/Developer/openfpga-arcade-cores/ref-pocket-cores/agg23/template",
+  "top": "core_top",
+  "filelist": "examples/core_template/filelist.f",
+  "scenario": "examples/core_template/template_boot.yml",
+  "metadata_jsons": {
+    "data": "{root}/dist/Cores/Developer.CoreTemplate/data.json",
+    "video": "{root}/dist/Cores/Developer.CoreTemplate/video.json",
+    "interact": "{root}/dist/Cores/Developer.CoreTemplate/interact.json"
+  },
+  "frames": 2,
+  "timeout_cycles": 10000000,
+  "build_dir": "build/profiles/core_template/obj",
+  "artifact_root": "build/profiles/core_template/run",
+  "required_paths": [
+    "{root}/dist/Cores/Developer.CoreTemplate/data.json",
+    "{root}/dist/Cores/Developer.CoreTemplate/video.json",
+    "{root}/dist/Cores/Developer.CoreTemplate/interact.json"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

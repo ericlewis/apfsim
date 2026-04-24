@@ -47,6 +47,25 @@ public:
     const FrameMetadata& last_metadata() const { return last_metadata_; }
     uint64_t errors() const { return total_errors_; }
 
+    void reset_capture() {
+        in_frame_ = false;
+        de_seen_this_line_ = false;
+        de_closed_this_line_ = false;
+        frames_started_ = 0;
+        frames_completed_ = 0;
+        hs_width_ = 0;
+        vs_width_ = 0;
+        total_errors_ = 0;
+        current_ = {};
+        last_metadata_ = {};
+        current_line_.clear();
+        current_lines_.clear();
+        if (!dump_dir_.empty()) {
+            std::filesystem::remove_all(dump_dir_);
+            std::filesystem::create_directories(dump_dir_);
+        }
+    }
+
 private:
     template <typename Top>
     void on_pixel_clock(const Top* top) {

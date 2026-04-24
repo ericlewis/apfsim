@@ -1,0 +1,28 @@
+{
+  "name": "mock",
+  "description": "Built-in deterministic APF mock core",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/boot_rom.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "frames": 5,
+  "timeout_cycles": 5000000,
+  "build_dir": "build/profiles/mock/obj",
+  "artifact_root": "build/profiles/mock/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "examples/assets/mock.rom"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

@@ -1,0 +1,25 @@
+name: basicassets_boot
+data_slots:
+  - id: 1
+    name: Background
+    file: /Users/ericlewis/Developer/core-example-basicassets/dist/assets/ex_image_1.bin
+    address: 0x00000000
+    required: true
+    size_exact: 184320
+  - id: 99
+    name: Audio
+    file: /Users/ericlewis/Developer/core-example-basicassets/dist/assets/ex_audio_1.wav
+    address: 0x00400000
+    required: true
+    size_maximum: 0x3C00000
+inputs: []
+run:
+  until_frames: 3
+  timeout_cycles: 120000000
+expect:
+  status: running
+  video:
+    active_width: 320
+    active_height: 288
+  audio:
+    min_samples: 64

@@ -1,0 +1,5 @@
+{
+  "name": "invalid_missing_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/boot_rom.yml"
+}

@@ -8,6 +8,7 @@ module altsyncram #(
     parameter integer numwords_b = (1 << widthad_b),
     parameter integer width_byteena_a = 1,
     parameter integer width_byteena_b = 1,
+    parameter string address_aclr_b = "NONE",
     parameter string address_reg_b = "CLOCK1",
     parameter string clock_enable_input_a = "BYPASS",
     parameter string clock_enable_input_b = "BYPASS",

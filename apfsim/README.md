@@ -17,6 +17,8 @@ The repository includes a deterministic mock APF `core_top` under `examples/mock
 - Controller key/joy/trig driving from YAML scenarios.
 - APF video capture on `video_rgb_clock`, protocol checks, PPM frame dumps, and per-frame JSON metadata.
 - I2S pin capture from `audio_mclk`, `audio_lrck`, and `audio_dac`, with WAV output.
+- Profile-driven CLI for repeatable builds/runs across mock and local real-core checkouts.
+- Structured run artifacts: `result.json`, `bridge.log`, frame metadata/PPM, WAV, audio stats, and save dumps.
 - Simulation replacements for common FPGA IP: `mf_pllbase`, `altsyncram`, selected `lpm_*` modules.
 - Make, CMake, and pytest wrapper scaffolding.
 
@@ -26,7 +28,7 @@ From the repository root:
 
 ```sh
 make lint
-make run-mock
+make profile-run PROFILE=mock FRAMES=2
 ```
 
 The mock run produces:
@@ -41,12 +43,54 @@ PASS input: scripted pulses delivered
 STATUS running
 ```
 
-Artifacts are written under `apfsim/build/run` by default:
+Profile artifacts are written under `apfsim/build/profiles/<profile>/run` by default:
 
-- `frames/frame_000001.ppm`
-- `frames/frame_000001.json`
+- `result.json`
+- `bridge.log`
+- `video/frame_000001.ppm`
+- `video/frame_000001.json`
 - `audio/out.wav`
+- `audio/stats.json`
 - `saves/slot_<id>.bin` for nonvolatile slots
+
+The older direct Make targets, such as `make run-mock`, are still available and now also emit `result.json`, `bridge.log`, and `audio/stats.json` under their legacy dump roots.
+
+## Profile CLI
+
+The production-gate entrypoint is `bin/apfsim` from this directory:
+
+```sh
+cd apfsim
+bin/apfsim doctor
+bin/apfsim build --profile mock
+bin/apfsim run --profile mock --frames 2
+bin/apfsim test --matrix local-fast
+```
+
+Available profile manifests live in `profiles/*.json`:
+
+| Profile | Purpose |
+| --- | --- |
+| `mock` | Built-in deterministic APF `core_top`. |
+| `core_template` | Local agg23 APF core template checkout, skipped if absent. |
+| `basicassets` | Local official BasicAssets checkout with generated sim wrapper and SDRAM model. |
+| `pacman` | Local Pac-Man APF shell check using VHDL entity stubs. |
+
+External checkout roots can be overridden with environment variables:
+
+```sh
+TEMPLATE_ROOT=/path/to/template bin/apfsim run --profile core_template
+BASICASSETS_ROOT=/path/to/core-example-basicassets bin/apfsim run --profile basicassets
+PACMAN_ROOT=/path/to/openFPGA-PacMan bin/apfsim run --profile pacman
+```
+
+Matrix modes:
+
+| Matrix | Profiles |
+| --- | --- |
+| `ci` | `mock` only. |
+| `local-fast` | `mock` plus available core template. |
+| `local-real` | `mock`, core template, BasicAssets, and Pac-Man when their checkouts exist. |
 
 ## Build Targets
 
@@ -58,6 +102,10 @@ make -C apfsim build
 make -C apfsim build-waves
 make -C apfsim run-mock
 make -C apfsim run-mock-waves
+make -C apfsim doctor
+make -C apfsim profile-build PROFILE=mock
+make -C apfsim profile-run PROFILE=mock FRAMES=2
+make -C apfsim test-matrix MATRIX=local-fast
 make -C apfsim test
 make -C apfsim clean
 ```
@@ -83,6 +131,9 @@ apfsim/build/obj/Vcore_top \
   --frames 300 \
   --dump-frames /tmp/apfsim-frames \
   --dump-audio /tmp/apfsim-audio/out.wav \
+  --audio-stats /tmp/apfsim-audio/stats.json \
+  --result-json /tmp/apfsim-result.json \
+  --bridge-log /tmp/apfsim-bridge.log \
   --dump-saves /tmp/apfsim-saves
 ```
 
@@ -225,3 +276,33 @@ STATUS running
 ```
 
 Important limitation: Pac-Man's real game logic is VHDL and `core_top.sv` directly instantiates the VHDL `pacman` entity. The Verilator path therefore uses [pacman_mixed_language_stubs.sv](rtl_shims/pacman_mixed_language_stubs.sv) for the VHDL game and savestate entities. This validates the APF-facing shell, bridge command flow, data-slot writes, interact writes, video/audio contracts, and controller delivery through the integration wrapper; it does not yet simulate the real Z80/VHDL gameplay.
+
+## Core Template Smoke Test
+
+The APF core template at:
+
+```text
+/Users/ericlewis/Developer/openfpga-arcade-cores/ref-pocket-cores/agg23/template
+```
+
+can be simulated with:
+
+```sh
+make -C apfsim run-template FRAMES=3
+```
+
+## BasicAssets Smoke Test
+
+The official BasicAssets example at:
+
+```text
+/Users/ericlewis/Developer/core-example-basicassets
+```
+
+can be simulated with:
+
+```sh
+make -C apfsim run-basicassets FRAMES=2
+```
+
+This target uses a small wrapper around the example `core_top.v` and a behavioral SDRAM model so data-slot writes are visible to the image and audio readers.

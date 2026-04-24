@@ -1,0 +1,30 @@
+{
+  "name": "pacman",
+  "description": "Pac-Man APF shell smoke test with Verilator stubs for VHDL gameplay entities",
+  "external": true,
+  "root_env": "PACMAN_ROOT",
+  "root_default": "/Users/ericlewis/Developer/openfpga-arcade-cores/our-pocket-cores/openFPGA-PacMan",
+  "top": "core_top",
+  "filelist": "examples/pacman/filelist.f",
+  "scenario": "examples/pacman/pacman_boot.yml",
+  "metadata_jsons": {
+    "video": "{root}/dist/Cores/ericlewis.PacMan/video.json",
+    "interact": "{root}/dist/Cores/ericlewis.PacMan/interact.json"
+  },
+  "frames": 2,
+  "timeout_cycles": 20000000,
+  "build_dir": "build/profiles/pacman/obj",
+  "artifact_root": "build/profiles/pacman/run",
+  "required_paths": [
+    "{root}/dist/Assets/pacman/common/puckman.rom",
+    "{root}/dist/Cores/ericlewis.PacMan/video.json",
+    "{root}/dist/Cores/ericlewis.PacMan/interact.json"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

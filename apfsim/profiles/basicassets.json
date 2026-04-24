@@ -1,0 +1,45 @@
+{
+  "name": "basicassets",
+  "description": "Official BasicAssets APF example with transactional SDRAM simulation",
+  "external": true,
+  "root_env": "BASICASSETS_ROOT",
+  "root_default": "/Users/ericlewis/Developer/core-example-basicassets",
+  "top": "core_top",
+  "filelist": "examples/basicassets/filelist.f",
+  "scenario": "examples/basicassets/basicassets_boot.yml",
+  "metadata_jsons": {
+    "data": "{root}/data.json",
+    "video": "{root}/video.json",
+    "interact": "{root}/interact.json"
+  },
+  "frames": 2,
+  "timeout_cycles": 120000000,
+  "write_idle_cycles": 64,
+  "build_dir": "build/profiles/basicassets/obj",
+  "artifact_root": "build/profiles/basicassets/run",
+  "generated_files": [
+    {
+      "type": "rename_module",
+      "source": "{root}/src/fpga/core/core_top.v",
+      "dest": "build/generated/basicassets_core_top_impl.v",
+      "from": "module core_top",
+      "to": "module basicassets_core_top_impl"
+    }
+  ],
+  "required_paths": [
+    "{root}/dist/assets/ex_image_1.bin",
+    "{root}/dist/assets/ex_audio_1.wav",
+    "{root}/data.json",
+    "{root}/video.json",
+    "{root}/interact.json",
+    "rtl_shims/basicassets_core_top_wrapper.sv",
+    "rtl_shims/basicassets_io_sdram_sim.v"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}
