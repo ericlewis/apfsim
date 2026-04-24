@@ -1,0 +1,7 @@
+{
+  "expected_width": 256,
+  "expected_height": 224,
+  "clock_port": "video_rgb_clock",
+  "de_port": "video_de",
+  "rgb_port": "video_rgb"
+}

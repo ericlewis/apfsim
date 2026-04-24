@@ -1,0 +1,28 @@
+name: mock_input_smoke
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+inputs:
+  - frame: 1
+    player: 1
+    button: Select
+    hold_frames: 2
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 2
+  - frame: 5
+    player: 1
+    button: A
+    hold_frames: 4
+run:
+  until_frames: 8
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224

@@ -1,0 +1,20 @@
+name: mock_boot_rom_save
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+  - id: 4
+    name: HISCORE
+    file: examples/assets/mock.hi
+    address: 0x20000000
+    nonvolatile: true
+run:
+  until_frames: 3
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224

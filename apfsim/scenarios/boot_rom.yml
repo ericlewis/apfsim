@@ -1,0 +1,31 @@
+name: mock_boot_rom
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+interact:
+  writes:
+    - frame: boot
+      address: 0x50000010
+      value: 1
+inputs:
+  - frame: 2
+    player: 1
+    button: Select
+    hold_frames: 1
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 1
+run:
+  until_frames: 5
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224
+  audio:
+    min_samples: 64

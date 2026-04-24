@@ -1,0 +1,6 @@
+{
+  "data_slots": [
+    { "id": 1, "name": "ROM", "address": 268435456, "required": true, "size_maximum": 1048576 },
+    { "id": 4, "name": "HISCORE", "address": 536870912, "nonvolatile": true, "size_exact": 43 }
+  ]
+}

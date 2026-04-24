@@ -1,0 +1,20 @@
+name: mock_interact_sweep
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+interact:
+  writes:
+    - frame: boot
+      address: 0x50000010
+      value: 1
+run:
+  until_frames: 2
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224

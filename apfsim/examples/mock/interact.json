@@ -1,0 +1,5 @@
+{
+  "items": [
+    { "id": "demo_setting", "name": "Demo setting", "address": 1342177296, "default": 1, "persistent": true }
+  ]
+}

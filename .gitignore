@@ -1,0 +1,20 @@
+# Build outputs
+build/
+apfsim/build/
+obj_dir/
+*.o
+*.a
+*.d
+*.fst
+*.vcd
+*.wav
+*.ppm
+*.png
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+
+# macOS
+.DS_Store
