@@ -51,6 +51,7 @@ Every diagnosed run also writes `memory_activity.json`:
 - `wrapper_generation`: generated scaffold path/classes/modules.
 - `declared_counters`: public counter names declared by the generated scaffold.
 - `counter_status`: `declared_not_observed`, `observed`, or `none`.
+- `counters`: live counter values when a wrapper exposes standard top-level memory counter ports.
 - `errors`: profile-level memory errors surfaced before live counters exist.
 - `notes`: whether this is provenance-only or live counter data.
 
@@ -60,6 +61,9 @@ Every diagnosed run also writes `memory_activity.json`:
 - `memory_models`
 - `memory_risks`
 - `memory_activity_observed`
+- `memory_counter_status`
+- `memory_counter_names`
+- `memory_error_counter_names`
 - `memory_error_codes`
 
 `memory.available_models` points at catalog entries that can be used by a generated wrapper. This is deliberately separate from `memory.models`: an available model is not selected until the profile/wrapper actually instantiates or includes it.
@@ -170,6 +174,59 @@ Current scaffold defaults:
 | `sram` | 17 | 16 | async pin bus | 128Kx16-style SRAM pins with `CE/OE/WE/LB/UB`. |
 | `psram` | 24 | 16 | 6 cycles | Transactional request/ack bring-up model. |
 | `cram` | 21 | 16 | 4 cycles | Transactional request/ack bring-up model. |
+
+## Live Counter Port Contract
+
+For live memory activity, a generated/core wrapper may expose standard top-level ports and opt the profile into C++ capture:
+
+```json
+{
+  "memory_activity": {
+    "top_port_classes": ["sram", "psram", "cram"]
+  }
+}
+```
+
+`apfsim` translates those classes into C++ build flags and reads only the selected port groups. Normal profiles are unaffected.
+
+Standard SRAM ports:
+
+```systemverilog
+output wire [31:0] apfsim_sram_read_count,
+output wire [31:0] apfsim_sram_write_count,
+output wire        apfsim_sram_bus_contention_error,
+output wire        apfsim_sram_byte_enable_error
+```
+
+Standard PSRAM ports:
+
+```systemverilog
+output wire [31:0] apfsim_psram_read_count,
+output wire [31:0] apfsim_psram_write_count,
+output wire        apfsim_psram_overrun_error,
+output wire        apfsim_psram_byte_enable_error
+```
+
+Standard CRAM ports:
+
+```systemverilog
+output wire [31:0] apfsim_cram_read_count,
+output wire [31:0] apfsim_cram_write_count,
+output wire        apfsim_cram_overrun_error,
+output wire        apfsim_cram_byte_enable_error
+```
+
+When observed, `result.json.memory_activity` carries the runtime snapshot and the postprocessed `memory_activity.json` changes to:
+
+```json
+{
+  "observed": true,
+  "counter_status": "observed",
+  "counters": [
+    {"name": "sram_write_count", "class": "sram", "value": 256, "error": false}
+  ]
+}
+```
 
 Future external RAM work should add model families with explicit confidence levels:
 

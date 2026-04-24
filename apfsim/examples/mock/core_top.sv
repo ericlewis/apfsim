@@ -33,6 +33,13 @@ module core_top (
     output reg         audio_mclk,
     output reg         audio_lrck,
     output reg         audio_dac
+`ifdef APFSIM_MEMORY_COUNTER_TEST
+    ,
+    output wire [31:0] apfsim_sram_read_count,
+    output wire [31:0] apfsim_sram_write_count,
+    output wire        apfsim_sram_bus_contention_error,
+    output wire        apfsim_sram_byte_enable_error
+`endif
 );
     localparam [31:0] APF_BASE   = 32'hF8000000;
     localparam [31:0] TGT_BASE   = 32'hF8001000;
@@ -109,6 +116,13 @@ module core_top (
     reg [31:0] rom_mem [0:511];
     reg [31:0] save_mem [0:16383];
     integer i;
+
+`ifdef APFSIM_MEMORY_COUNTER_TEST
+    assign apfsim_sram_read_count = input_sample_count;
+    assign apfsim_sram_write_count = rom_write_count;
+    assign apfsim_sram_bus_contention_error = 1'b0;
+    assign apfsim_sram_byte_enable_error = 1'b0;
+`endif
 
     function automatic [31:0] ok_word(input [15:0] result);
         ok_word = 32'h4F4B0000 | {16'h0000, result};

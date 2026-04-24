@@ -23,6 +23,7 @@ MOCK_PUBLIC_PROFILES = {
     "mock_rom_stress",
     "mock_target_commands",
     "mock_lifecycle",
+    "mock_memory_activity",
 }
 
 

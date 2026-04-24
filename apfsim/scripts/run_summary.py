@@ -37,6 +37,9 @@ TSV_COLUMNS = [
     "memory_models",
     "memory_risks",
     "memory_activity_observed",
+    "memory_counter_status",
+    "memory_counter_names",
+    "memory_error_counter_names",
     "memory_error_codes",
     "artifact_dir",
 ]
@@ -137,6 +140,16 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         for item in _list(memory_activity.get("errors"))
         if isinstance(item, dict) and item.get("code")
     ]
+    memory_counters = [
+        item for item in _list(memory_activity.get("counters"))
+        if isinstance(item, dict) and item.get("name")
+    ]
+    memory_counter_names = [str(item.get("name")) for item in memory_counters]
+    memory_error_counter_names = [
+        str(item.get("counter"))
+        for item in _list(memory_activity.get("errors"))
+        if isinstance(item, dict) and item.get("counter")
+    ]
     data_slots = [slot for slot in _list(data_load.get("slots")) if isinstance(slot, dict)]
     data_crc_list = [str(slot.get("crc")) for slot in data_slots if slot.get("crc")]
     data_readback_verified_slots = sum(1 for slot in data_slots if _as_bool(slot.get("readback_attempted"), False))
@@ -188,6 +201,9 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "memory_models": memory_models,
         "memory_risks": memory_risks,
         "memory_activity_observed": _as_bool(memory_activity.get("observed"), False),
+        "memory_counter_status": str(memory_activity.get("counter_status") or "none"),
+        "memory_counter_names": memory_counter_names,
+        "memory_error_counter_names": memory_error_counter_names,
         "memory_error_codes": memory_error_codes,
         "artifact_dir": str(artifact_dir),
     }

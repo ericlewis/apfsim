@@ -175,6 +175,82 @@ struct ReadbackObservation {
     bool ok = false;
 };
 
+struct MemoryCounterObservation {
+    std::string name;
+    std::string class_name;
+    uint64_t value = 0;
+    bool error = false;
+    std::string error_code;
+};
+
+struct MemoryActivitySnapshot {
+    bool observed = false;
+    std::vector<MemoryCounterObservation> counters;
+};
+
+template <typename Top>
+static MemoryActivitySnapshot capture_memory_activity(Top* top) {
+    MemoryActivitySnapshot snapshot;
+    (void)top;
+#if APFSIM_MEMORY_COUNTER_SRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"sram_read_count", "sram", static_cast<uint64_t>(top->apfsim_sram_read_count), false, ""});
+    snapshot.counters.push_back({"sram_write_count", "sram", static_cast<uint64_t>(top->apfsim_sram_write_count), false, ""});
+    snapshot.counters.push_back({"sram_bus_contention_error", "sram", static_cast<uint64_t>(top->apfsim_sram_bus_contention_error), top->apfsim_sram_bus_contention_error != 0, "SRAM_BUS_CONTENTION"});
+    snapshot.counters.push_back({"sram_byte_enable_error", "sram", static_cast<uint64_t>(top->apfsim_sram_byte_enable_error), top->apfsim_sram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+#if APFSIM_MEMORY_COUNTER_PSRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"psram_read_count", "psram", static_cast<uint64_t>(top->apfsim_psram_read_count), false, ""});
+    snapshot.counters.push_back({"psram_write_count", "psram", static_cast<uint64_t>(top->apfsim_psram_write_count), false, ""});
+    snapshot.counters.push_back({"psram_overrun_error", "psram", static_cast<uint64_t>(top->apfsim_psram_overrun_error), top->apfsim_psram_overrun_error != 0, "MEMORY_STALL_TIMEOUT"});
+    snapshot.counters.push_back({"psram_byte_enable_error", "psram", static_cast<uint64_t>(top->apfsim_psram_byte_enable_error), top->apfsim_psram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+#if APFSIM_MEMORY_COUNTER_CRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"cram_read_count", "cram", static_cast<uint64_t>(top->apfsim_cram_read_count), false, ""});
+    snapshot.counters.push_back({"cram_write_count", "cram", static_cast<uint64_t>(top->apfsim_cram_write_count), false, ""});
+    snapshot.counters.push_back({"cram_overrun_error", "cram", static_cast<uint64_t>(top->apfsim_cram_overrun_error), top->apfsim_cram_overrun_error != 0, "MEMORY_STALL_TIMEOUT"});
+    snapshot.counters.push_back({"cram_byte_enable_error", "cram", static_cast<uint64_t>(top->apfsim_cram_byte_enable_error), top->apfsim_cram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+    return snapshot;
+}
+
+static void write_memory_activity_object(std::ostream& out, const MemoryActivitySnapshot& memory, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{\n";
+    out << pad << "  \"schema\": \"apfsim.memory_activity.runtime.v1\",\n";
+    out << pad << "  \"observed\": " << (memory.observed ? "true" : "false") << ",\n";
+    out << pad << "  \"counter_status\": \"" << (memory.observed ? "observed" : "none") << "\",\n";
+    out << pad << "  \"counters\": [\n";
+    for (size_t i = 0; i < memory.counters.size(); ++i) {
+        const auto& counter = memory.counters[i];
+        out << pad << "    { \"name\": \"" << json_escape(counter.name)
+            << "\", \"class\": \"" << json_escape(counter.class_name)
+            << "\", \"value\": " << counter.value
+            << ", \"error\": " << (counter.error ? "true" : "false");
+        if (!counter.error_code.empty()) out << ", \"error_code\": \"" << json_escape(counter.error_code) << "\"";
+        out << " }";
+        out << (i + 1 == memory.counters.size() ? "\n" : ",\n");
+    }
+    out << pad << "  ],\n";
+    out << pad << "  \"errors\": [\n";
+    bool wrote_error = false;
+    for (const auto& counter : memory.counters) {
+        if (!counter.error) continue;
+        if (wrote_error) out << ",\n";
+        out << pad << "    { \"code\": \"" << json_escape(counter.error_code)
+            << "\", \"severity\": \"error\", \"counter\": \"" << json_escape(counter.name)
+            << "\", \"class\": \"" << json_escape(counter.class_name)
+            << "\", \"value\": " << counter.value
+            << ", \"observed\": true }";
+        wrote_error = true;
+    }
+    if (wrote_error) out << "\n";
+    out << pad << "  ]\n";
+    out << pad << "}";
+}
+
 static std::string format_failure_summary(const Assertions& asserts) {
     std::ostringstream ss;
     const auto& failures = asserts.failures();
@@ -392,6 +468,7 @@ static void write_result_json(
     const std::vector<SaveReport>& save_reports,
     const std::vector<SavestateReport>& savestate_reports,
     const std::vector<ReadbackObservation>& readbacks,
+    const MemoryActivitySnapshot& memory_activity,
     const std::vector<std::string>& failures,
     size_t interact_writes,
     bool interact_verify_readback,
@@ -748,6 +825,9 @@ static void write_result_json(
         out << (i + 1 == savestate_reports.size() ? "\n" : ",\n");
     }
     out << "  ] },\n";
+    out << "  \"memory_activity\": ";
+    write_memory_activity_object(out, memory_activity, 2);
+    out << ",\n";
     out << "  \"host_commands\": [\n";
     for (size_t i = 0; i < scenario.host_commands.size(); ++i) {
         const auto& event = scenario.host_commands[i];
@@ -1364,6 +1444,7 @@ int main(int argc, char** argv) {
             phase = "play";
             const int rc = run_interactive_loop(sim, video, inputs, bridge, scenario, savestate_reports, opt);
 
+            const MemoryActivitySnapshot memory_activity = capture_memory_activity(top.get());
             top->final();
             phase = "audio";
             audio.finish();
@@ -1376,7 +1457,7 @@ int main(int argc, char** argv) {
             write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
             std::vector<ReadbackObservation> readback_observations;
             std::vector<std::string> failures;
-            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, rc == 0, scenario, video);
             std::cout << "PASS play: frames=" << video.frames_completed() << " cycles_74a=" << sim.cycles_74a() << "\n";
             return rc;
@@ -1400,6 +1481,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        const MemoryActivitySnapshot memory_activity = capture_memory_activity(top.get());
         top->final();
         phase = "audio";
         audio.finish();
@@ -1429,12 +1511,12 @@ int main(int argc, char** argv) {
         if (!asserts.ok()) {
             asserts.print();
             print_failure_diagnostics("assert", opt.result_json, video, audio, bridge, sim.cycles_74a());
-            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, false, scenario, video);
             return 1;
         }
 
-        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
         write_video_shape_json(opt.video_shape_json, opt.result_json, true, scenario, video);
         const auto& meta = video.last_metadata();
         const auto& astats = audio.stats();

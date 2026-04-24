@@ -329,6 +329,15 @@ def dedupe_generated_files(values: list[Any]) -> list[Any]:
     return out
 
 
+def memory_activity_top_port_classes(profile: Profile) -> list[str]:
+    cfg = profile.raw.get("memory_activity") if isinstance(profile.raw.get("memory_activity"), dict) else {}
+    values = cfg.get("top_port_classes", profile.raw.get("memory_activity_top_port_classes", []))
+    if isinstance(values, str):
+        values = [values]
+    allowed = {"sram", "psram", "cram"}
+    return [cls for cls in dedupe_strings(list(values) if isinstance(values, list) else []) if cls in allowed]
+
+
 def require_keys(profile: Profile, keys: list[str]) -> None:
     missing = [key for key in keys if key not in profile.raw]
     if missing:
@@ -430,6 +439,8 @@ def sdl2_flags() -> tuple[str, str]:
 
 def verilator_base_args(profile: Profile, waves: bool = False, sdl: bool = False) -> list[str]:
     cflags = "-std=c++20 -O2 -Icpp"
+    for cls in memory_activity_top_port_classes(profile):
+        cflags = f"{cflags} -DAPFSIM_MEMORY_COUNTER_{cls.upper()}=1"
     ldflags: str | None = None
     if sdl:
         sdl_cflags, sdl_libs = sdl2_flags()
@@ -763,6 +774,7 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
         "generated_file_provenance": generated_file_provenance,
         "memory_dependencies": memory_dependencies,
         "memory_models": memory_models,
+        "memory_activity": profile.raw.get("memory_activity", {}),
         "wrapper_generation": profile.raw.get("wrapper_generation", {}),
         "sim_only_paths": dedupe_strings(explicit_sim_only_paths + heuristic_sim_only_paths),
     }
@@ -776,6 +788,15 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
     memory_dependencies = provenance.get("memory_dependencies") if isinstance(provenance.get("memory_dependencies"), dict) else {}
     wrapper_generation = provenance.get("wrapper_generation") if isinstance(provenance.get("wrapper_generation"), dict) else {}
     memory_wrapper = wrapper_generation.get("memory_models") if isinstance(wrapper_generation.get("memory_models"), dict) else {}
+    result_memory: dict[str, Any] = {}
+    result_path = artifact_root / "result.json"
+    if result_path.exists():
+        try:
+            result = load_json(result_path)
+            if isinstance(result.get("memory_activity"), dict):
+                result_memory = result["memory_activity"]
+        except Exception:
+            result_memory = {}
     shimmed = [item for item in provenance.get("shimmed_modules", []) if isinstance(item, dict)]
     memory_shims = [
         {
@@ -799,22 +820,32 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
             "message": str(risk.get("message") or ""),
             "observed": False,
         })
+    runtime_errors = [
+        item for item in result_memory.get("errors", [])
+        if isinstance(item, dict) and str(item.get("code", ""))
+    ]
     classes = [str(item) for item in memory_dependencies.get("classes", [])]
     declared_counters = [str(item) for item in memory_wrapper.get("activity_counters", [])]
+    observed = bool(result_memory.get("observed"))
+    runtime_counters = [
+        item for item in result_memory.get("counters", [])
+        if isinstance(item, dict) and str(item.get("name", ""))
+    ]
     doc = {
         "schema": "apfsim.memory_activity.v1",
         "profile": profile.name,
-        "observed": False,
+        "observed": observed,
         "classes": classes,
         "external_classes": [str(item) for item in memory_dependencies.get("external_classes", [])],
         "models": provenance.get("memory_models", []),
         "selected_shims": memory_shims,
         "wrapper_generation": memory_wrapper,
         "declared_counters": declared_counters,
-        "counter_status": "declared_not_observed" if declared_counters else "none",
-        "counters": [],
-        "errors": errors,
+        "counter_status": "observed" if observed else ("declared_not_observed" if declared_counters else "none"),
+        "counters": runtime_counters if observed else [],
+        "errors": errors + runtime_errors,
         "notes": [
+            "Memory activity was observed through standard apfsim top-level counter ports." if observed else
             "Memory activity is a provenance artifact unless the generated wrapper wires public counter probes.",
             "Use data-slot readback and bridge traces to catch ROM corruption until live memory counters are connected.",
         ] if classes else ["No memory dependencies were discovered for this profile."],

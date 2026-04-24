@@ -73,12 +73,16 @@ def make_artifacts(root: Path):
     write_json(root / "memory_activity.json", {
         "schema": "apfsim.memory_activity.v1",
         "profile": "fake",
-        "observed": False,
+        "observed": True,
         "classes": ["sdram", "bram"],
         "external_classes": ["sdram"],
         "models": [],
-        "counters": [],
-        "errors": [{"code": "SDRAM_INIT_TIMEOUT", "severity": "error", "observed": False}],
+        "counter_status": "observed",
+        "counters": [
+            {"name": "sdram_read_count", "class": "sdram", "value": 10, "error": False},
+            {"name": "sdram_overrun_error", "class": "sdram", "value": 1, "error": True},
+        ],
+        "errors": [{"code": "SDRAM_INIT_TIMEOUT", "severity": "error", "observed": False, "counter": "sdram_overrun_error"}],
     })
 
 
@@ -102,7 +106,10 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["memory_classes"] == ["sdram", "bram"]
     assert row["memory_models"] == ["sdram:ideal_transactional"]
     assert row["memory_risks"] == ["SDRAM_TIMING_NOT_POCKET_LIKE"]
-    assert row["memory_activity_observed"] is False
+    assert row["memory_activity_observed"] is True
+    assert row["memory_counter_status"] == "observed"
+    assert row["memory_counter_names"] == ["sdram_read_count", "sdram_overrun_error"]
+    assert row["memory_error_counter_names"] == ["sdram_overrun_error"]
     assert row["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
     assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
     assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
