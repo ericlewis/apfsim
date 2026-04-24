@@ -101,6 +101,61 @@
       "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
     },
     {
+      "name": "vlm5030_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTCORES' public Verilog translation of the Sanyo VLM5030 speech synthesizer when cores instantiate vlm5030_gl.",
+      "modules": ["vlm5030_gl"],
+      "detect": {
+        "source_patterns": ["\\bvlm5030_gl\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/vlm5030/hdl/vlm5030.v",
+        "{root}/../modules/vlm5030/hdl/vlm5030.v",
+        "{root}/../../modules/vlm5030/hdl/vlm5030.v",
+        "$JTCORES_ROOT/modules/vlm5030/hdl/vlm5030.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "jtframe_mc8051_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the Oregano 8051 core when jtframe_8751mcu instantiates mc8051_core.",
+      "modules": ["mc8051_core"],
+      "detect": {
+        "source_patterns": ["\\bmc8051_core\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/mc8051.v",
+        "{root}/../modules/jtframe/hdl/cpu/mc8051.v",
+        "{root}/../../modules/jtframe/hdl/cpu/mc8051.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/mc8051.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "jtframe_fx68k_verilator_compat",
+      "kind": "verilator_compat_flags",
+      "confidence": "compile_only",
+      "description": "Suppress Verilator's BLKANDNBLK rejection for JTFRAME's fx68k SystemVerilog translation so APF contract bring-up can proceed.",
+      "modules": ["fx68k"],
+      "detect": {
+        "source_patterns": ["\\bmodule\\s+fx68k\\b"]
+      },
+      "required_paths": [
+        "$JTCORES_ROOT/modules/fx68k/hdl/microrom.mem",
+        "$JTCORES_ROOT/modules/fx68k/hdl/nanorom.mem"
+      ],
+      "runtime_cwd": "$JTCORES_ROOT/modules/fx68k/hdl",
+      "verilator_flags": ["-Wno-BLKANDNBLK", "--no-assert"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
       "name": "sdram_ideal_transactional",
       "kind": "behavioral_model",
       "confidence": "bringup_only",

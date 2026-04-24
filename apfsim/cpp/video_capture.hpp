@@ -364,7 +364,7 @@ private:
         std::vector<uint32_t> pixels;
         pixels.reserve(current_.active_width * current_.active_height);
         std::unordered_set<uint32_t> colors;
-        uint64_t hash = 1469598103934665603ull;
+        uint64_t hash = kFnv1a64OffsetBasis;
         uint64_t nonzero = 0;
         for (const auto& line : current_lines_) {
             for (size_t x = 0; x < current_.active_width; ++x) {
@@ -373,11 +373,11 @@ private:
                 colors.insert(rgb);
                 if (rgb != 0) ++nonzero;
                 hash ^= rgb & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
                 hash ^= (rgb >> 8) & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
                 hash ^= (rgb >> 16) & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
             }
         }
         uint64_t changed = 0;

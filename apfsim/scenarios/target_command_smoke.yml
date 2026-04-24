@@ -5,7 +5,7 @@ data_slots:
     file: examples/assets/mock.rom
     address: 0x10000000
     required: true
-    expected_checksum: 0x86EA4CAF14129F83
+    expected_checksum: 0x22881EE47ABB6B25
   - id: 4
     name: HISCORE
     address: 0x20000000

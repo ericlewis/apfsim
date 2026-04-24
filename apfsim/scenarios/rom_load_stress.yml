@@ -6,7 +6,7 @@ data_slots:
     address: 0x10000000
     required: true
     verify_readback: true
-    expected_checksum: 0xC2DB5F2D9083B8A2
+    expected_checksum: 0xAB58FF4701261F50
 run:
   until_frames: 2
   timeout_cycles: 5000000

@@ -489,8 +489,7 @@ static void write_result_json(
     const bool interact_ok = phase_has_no_failure(failures, "interact:");
     const bool input_ok = phase_has_no_failure(failures, "input:");
     const bool save_ok = phase_has_no_failure(failures, "save:");
-    uint64_t loaded_bytes_total = 0;
-    for (const auto& slot : slots) loaded_bytes_total += slot.loaded_size;
+    const uint64_t loaded_bytes_total = host_loaded_bytes(slots);
     out << "{\n";
     out << "  \"ok\": " << (ok ? "true" : "false") << ",\n";
     out << "  \"scenario\": \"" << json_escape(scenario.name) << "\",\n";
@@ -1166,12 +1165,6 @@ static void apply_data_expect_to_slots(Scenario& scenario) {
     }
 }
 
-static uint64_t total_loaded_bytes(const std::vector<DataSlot>& slots) {
-    uint64_t total = 0;
-    for (const auto& slot : slots) total += slot.loaded_size;
-    return total;
-}
-
 static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video) {
     const auto& expect = scenario.video_expect;
     const auto& meta = video.last_metadata();
@@ -1258,7 +1251,7 @@ static void validate_data(Assertions& asserts, const Scenario& scenario) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " bridge write address stride mismatch");
         }
     }
-    if (expect.expected_total_loaded_bytes && total_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {
+    if (expect.expected_total_loaded_bytes && host_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {
         asserts.fail("data: total loaded byte count mismatch");
     }
 }

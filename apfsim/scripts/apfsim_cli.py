@@ -213,6 +213,7 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
     required_paths = list(expanded.get("required_paths", []))
     verilator_flags = list(expanded.get("verilator_flags", []))
     expected_artifacts = list(expanded.get("expected_artifacts", []))
+    runtime_cwd = expanded.get("runtime_cwd")
     catalog_expanded: list[dict[str, Any]] = []
 
     for spec in specs:
@@ -243,6 +244,8 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
             verilator_flags.append(str(expand_catalog_value(value, expanded, profile_name, context)))
         for value in entry.get("expected_artifacts", []):
             expected_artifacts.append(str(expand_catalog_value(value, expanded, profile_name, context)))
+        if not runtime_cwd and entry.get("runtime_cwd"):
+            runtime_cwd = str(expand_catalog_value(entry["runtime_cwd"], expanded, profile_name, context))
         catalog_expanded.append({
             "name": name,
             "description": entry.get("description", ""),
@@ -259,6 +262,8 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
     expanded["required_paths"] = dedupe_strings(required_paths)
     expanded["verilator_flags"] = dedupe_strings(verilator_flags)
     expanded["expected_artifacts"] = dedupe_strings(expected_artifacts)
+    if runtime_cwd:
+        expanded["runtime_cwd"] = str(runtime_cwd)
     expanded["shim_catalog_expanded"] = catalog_expanded
     return expanded
 
@@ -1920,6 +1925,8 @@ def cmd_shim_catalog(args: argparse.Namespace) -> int:
                 if isinstance(item, dict) and item.get("catalog_entry")
             ],
             "required_paths": profile.raw.get("required_paths", []),
+            "runtime_cwd": profile.raw.get("runtime_cwd", ""),
+            "verilator_flags": profile.raw.get("verilator_flags", []),
         }
     else:
         catalog = load_shim_catalog(catalog_path)

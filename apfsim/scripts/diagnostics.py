@@ -942,6 +942,11 @@ def _diagnose_saves(
     ]
     reports = [report for report in _list(save.get("reports")) if isinstance(report, dict)]
     save_was_expected = result_ok or failed_phase == "save" or "save" in message.lower()
+    roundtrip_was_expected = failed_phase == "save" and (
+        "roundtrip" in message.lower()
+        or "match input" in message.lower()
+        or "did not match" in message.lower()
+    )
     if nonvolatile_slots and not reports:
         if not save_was_expected:
             return
@@ -959,6 +964,8 @@ def _diagnose_saves(
         )
     for index, report in enumerate(reports):
         if report.get("matches_input") is False:
+            if not roundtrip_was_expected:
+                continue
             _diag(
                 items,
                 code="SAVE_ROUNDTRIP_MISMATCH",

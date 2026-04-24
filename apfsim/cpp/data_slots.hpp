@@ -53,11 +53,14 @@ struct DataSlot {
     uint64_t target_open_requests = 0;
 };
 
+inline constexpr uint64_t kFnv1a64OffsetBasis = 14695981039346656037ull;
+inline constexpr uint64_t kFnv1a64Prime = 1099511628211ull;
+
 inline uint64_t fnv1a64(const std::vector<uint8_t>& bytes) {
-    uint64_t hash = 1469598103934665603ull;
+    uint64_t hash = kFnv1a64OffsetBasis;
     for (const auto byte : bytes) {
         hash ^= byte;
-        hash *= 1099511628211ull;
+        hash *= kFnv1a64Prime;
     }
     return hash;
 }
@@ -71,6 +74,14 @@ inline uint32_t crc32(const std::vector<uint8_t>& bytes) {
         }
     }
     return ~crc;
+}
+
+inline uint64_t host_loaded_bytes(const std::vector<DataSlot>& slots) {
+    uint64_t total = 0;
+    for (const auto& slot : slots) {
+        if (!slot.deferload && !slot.nonvolatile) total += slot.loaded_size;
+    }
+    return total;
 }
 
 inline std::string json_string_field(const std::string& object, const std::string& key) {

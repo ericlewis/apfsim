@@ -66,8 +66,8 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
     assert result["data"]["slots"][0]["observed_first_write_address"] == "0x10000000"
     assert result["data"]["slots"][0]["observed_last_write_address"] == "0x100003FC"
     assert result["data"]["slots"][0]["observed_write_address_errors"] == 0
-    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
-    assert result["data"]["slots"][0]["expected_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x22881EE47ABB6B25"
+    assert result["data"]["slots"][0]["expected_checksum"] == "0x22881EE47ABB6B25"
     assert result["data"]["slots"][0]["verify_readback"] is True
     assert result["data"]["slots"][0]["readback_attempted"] is True
     assert result["data"]["slots"][0]["readback_matches"] is True
@@ -131,7 +131,7 @@ def test_rom_load_stress_covers_odd_sized_payload_readback(tmp_path):
     assert slot["observed_write_words"] == 257
     assert slot["observed_first_write_address"] == "0x10000000"
     assert slot["observed_last_write_address"] == "0x10000400"
-    assert slot["loaded_checksum"] == "0xC2DB5F2D9083B8A2"
+    assert slot["loaded_checksum"] == "0xAB58FF4701261F50"
     assert slot["readback_attempted"] is True
     assert slot["readback_matches"] is True
     assert slot["readback_bytes"] == 1025
@@ -316,7 +316,7 @@ def test_failed_data_checksum_gate_writes_actionable_result(tmp_path):
     assert result["ok"] is False
     assert result["failed_phase"] == "assert"
     assert "data: slot 1 checksum mismatch" in result["failures"]
-    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x22881EE47ABB6B25"
     assert result["data"]["slots"][0]["expected_checksum"] == "0x0000000000000001"
 
 

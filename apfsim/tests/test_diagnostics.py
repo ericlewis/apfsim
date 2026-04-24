@@ -233,3 +233,30 @@ def test_diagnostics_warn_when_observed_memory_counters_stay_idle_during_load(tm
     item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_NO_ACTIVITY")
     assert item["severity"] == "warning"
     assert item["observed"]["loaded_bytes"] == 1024
+
+
+def test_diagnostics_do_not_require_save_roundtrip_when_only_unload_was_expected(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["data"]["slots"].append({"id": 4, "nonvolatile": True, "loaded_size": 43, "file": "mock.hi"})
+    result["save"] = {"reports": [{"id": 4, "bytes": 43, "matches_input": False}]}
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "SAVE_ROUNDTRIP_MISMATCH" not in diagnostic_codes(doc)
+
+
+def test_diagnostics_report_save_roundtrip_when_scenario_failed_on_roundtrip(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "save"
+    result["message"] = "save: unloaded slot 4 did not match input"
+    result["data"]["slots"].append({"id": 4, "nonvolatile": True, "loaded_size": 43, "file": "mock.hi"})
+    result["save"] = {"reports": [{"id": 4, "bytes": 43, "matches_input": False}]}
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "SAVE_ROUNDTRIP_MISMATCH" in diagnostic_codes(doc)

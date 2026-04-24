@@ -278,7 +278,7 @@ Use the built-in `mock_rom_stress` profile to test odd-sized data-slot writes, p
 bin/apfsim run --profile mock_rom_stress --artifacts output/mock-rom-stress
 ```
 
-This loads `examples/assets/rom_stress.bin` as 1025 bytes at `0x10000000`, expects 257 bridge writes, reads back exactly 1025 bytes, and checks the simulator FNV-1a checksum `0xC2DB5F2D9083B8A2`.
+This loads `examples/assets/rom_stress.bin` as 1025 bytes at `0x10000000`, expects 257 bridge writes, reads back exactly 1025 bytes, and checks the simulator FNV-1a checksum `0xAB58FF4701261F50`.
 
 Use `mock_external_sram` to run the same load through the public async SRAM model:
 

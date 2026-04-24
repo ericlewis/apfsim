@@ -45,6 +45,7 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "runtime_cwd": { "type": "string" },
           "expected_artifacts": {
             "type": "array",
             "items": { "type": "string" }

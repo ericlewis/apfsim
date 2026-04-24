@@ -6,7 +6,7 @@ data_slots:
     address: 0x10000000
     required: true
     verify_readback: true
-    expected_checksum: 0x86EA4CAF14129F83
+    expected_checksum: 0x22881EE47ABB6B25
 interact:
   writes:
     - frame: boot

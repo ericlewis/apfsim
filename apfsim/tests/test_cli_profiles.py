@@ -191,6 +191,36 @@ def test_shim_catalog_lists_public_catalog():
     assert "sram" in sram["memory_classes"]
 
 
+def test_shim_catalog_profile_expands_runtime_cwd_and_verilator_flags(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({
+        "schema": "apfsim.shim_catalog.v1",
+        "entries": [
+            {
+                "name": "runtime_assets",
+                "verilator_flags": ["-Wno-BLKANDNBLK"],
+                "runtime_cwd": "{root}/hdl",
+            }
+        ],
+    }))
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({
+        "name": "profile",
+        "root": str(tmp_path),
+        "top": "core_top",
+        "filelist": "filelist.f",
+        "scenario": "scenario.yml",
+        "shim_catalog": ["runtime_assets"],
+    }))
+
+    r = run_cli("shim-catalog", "--profile", str(profile), "--catalog", str(catalog), "--json")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["runtime_cwd"] == str(tmp_path / "hdl")
+    assert "-Wno-BLKANDNBLK" in doc["verilator_flags"]
+
+
 def test_apply_video_shape_patches_scaler_modes_and_hints(tmp_path):
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
