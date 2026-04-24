@@ -24,6 +24,7 @@ module altsyncram #(
     parameter string outdata_reg_a = "CLOCK0",
     parameter string outdata_reg_b = "CLOCK1",
     parameter string power_up_uninitialized = "FALSE",
+    parameter string read_during_write_mode_mixed_ports = "DONT_CARE",
     parameter string read_during_write_mode_port_a = "NEW_DATA_NO_NBE_READ",
     parameter string read_during_write_mode_port_b = "NEW_DATA_NO_NBE_READ",
     parameter string wrcontrol_wraddress_reg_b = "CLOCK1"
@@ -42,8 +43,8 @@ module altsyncram #(
     input  wire wren_b,
     input  wire rden_a,
     input  wire rden_b,
-    input  wire byteena_a,
-    input  wire byteena_b,
+    input  wire [width_byteena_a-1:0] byteena_a,
+    input  wire [width_byteena_b-1:0] byteena_b,
     input  wire clocken0,
     input  wire clocken1,
     input  wire clocken2,
@@ -64,17 +65,54 @@ module altsyncram #(
         for (i = 0; i < DEPTH; i = i + 1) mem[i] = '0;
     end
 
+    task automatic write_a(input [widthad_a-1:0] addr, input [width_a-1:0] data, input [width_byteena_a-1:0] be);
+        integer b;
+        begin
+            if (width_byteena_a <= 1) begin
+                mem[addr][width_a-1:0] <= data;
+            end else begin
+                for (b = 0; b < width_byteena_a; b = b + 1) begin
+                    if (be[b]) mem[addr][(b * (width_a / width_byteena_a)) +: (width_a / width_byteena_a)] <= data[(b * (width_a / width_byteena_a)) +: (width_a / width_byteena_a)];
+                end
+            end
+        end
+    endtask
+
+    task automatic write_b(input [widthad_b-1:0] addr, input [width_b-1:0] data, input [width_byteena_b-1:0] be);
+        integer b;
+        begin
+            if (width_byteena_b <= 1) begin
+                mem[addr][width_b-1:0] <= data;
+            end else begin
+                for (b = 0; b < width_byteena_b; b = b + 1) begin
+                    if (be[b]) mem[addr][(b * (width_b / width_byteena_b)) +: (width_b / width_byteena_b)] <= data[(b * (width_b / width_byteena_b)) +: (width_b / width_byteena_b)];
+                end
+            end
+        end
+    endtask
+
     always @(posedge clock0) begin
         if (clocken0 !== 1'b0) begin
-            if (wren_a) mem[address_a] <= data_a;
+            if (wren_a) write_a(address_a, data_a, byteena_a);
             if (rden_a !== 1'b0) q_a <= mem[address_a][width_a-1:0];
         end
     end
 
-    always @(posedge clock1) begin
-        if (clocken1 !== 1'b0) begin
-            if (wren_b) mem[address_b] <= data_b;
-            if (rden_b !== 1'b0) q_b <= mem[address_b][width_b-1:0];
+    generate
+        if (address_reg_b == "CLOCK0" || indata_reg_b == "CLOCK0" || outdata_reg_b == "CLOCK0" || wrcontrol_wraddress_reg_b == "CLOCK0") begin : port_b_clock0
+            always @(posedge clock0) begin
+                if (clocken0 !== 1'b0) begin
+                    if (wren_b) write_b(address_b, data_b, byteena_b);
+                    if (rden_b !== 1'b0) q_b <= mem[address_b][width_b-1:0];
+                end
+            end
+        end else begin : port_b_clock1
+            always @(posedge clock1) begin
+                if (clocken1 !== 1'b0) begin
+                    if (wren_b) write_b(address_b, data_b, byteena_b);
+                    if (rden_b !== 1'b0) q_b <= mem[address_b][width_b-1:0];
+                end
+            end
         end
-    end
+    endgenerate
 endmodule

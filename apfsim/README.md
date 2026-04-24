@@ -76,6 +76,7 @@ Available profile manifests live in `profiles/*.json`:
 | `core_template` | Local agg23 APF core template checkout, skipped if absent. |
 | `basicassets` | Local official BasicAssets checkout with generated sim wrapper and SDRAM model. |
 | `pacman` | Local Pac-Man APF shell check using VHDL entity stubs. |
+| `mrjong` | Local Mr. Jong real Verilog gameplay path with non-placeholder frame capture. |
 
 External checkout roots can be overridden with environment variables:
 
@@ -83,6 +84,7 @@ External checkout roots can be overridden with environment variables:
 TEMPLATE_ROOT=/path/to/template bin/apfsim run --profile core_template
 BASICASSETS_ROOT=/path/to/core-example-basicassets bin/apfsim run --profile basicassets
 PACMAN_ROOT=/path/to/openFPGA-PacMan bin/apfsim run --profile pacman
+MRJONG_ROOT=/path/to/openFPGA-MrJong bin/apfsim run --profile mrjong
 ```
 
 Matrix modes:
@@ -91,7 +93,7 @@ Matrix modes:
 | --- | --- |
 | `ci` | `mock_port_gate` only. |
 | `local-fast` | `mock_port_gate` plus available core template. |
-| `local-real` | `mock_port_gate`, core template, BasicAssets, and Pac-Man when their checkouts exist. |
+| `local-real` | `mock_port_gate`, core template, BasicAssets, Pac-Man, and Mr. Jong when their checkouts exist. |
 
 ## Pocket Log Analysis
 
@@ -343,6 +345,33 @@ can be simulated with:
 ```sh
 make -C apfsim run-template FRAMES=3
 ```
+
+## Mr. Jong Real-Frame Smoke Test
+
+The Mr. Jong port at:
+
+```text
+/Users/ericlewis/Developer/openfpga-arcade-cores/our-pocket-cores/openFPGA-MrJong
+```
+
+can be simulated with:
+
+```sh
+bin/apfsim run --profile mrjong
+```
+
+Expected result:
+
+```text
+PASS data: slot 1 loaded 41248 bytes at 0x10000000
+PASS boot: reached running
+PASS video: 12 frames, 240x224 active
+PASS audio: ... stereo samples
+PASS input: scripted pulses delivered
+STATUS running
+```
+
+This is the first local pure-Verilog arcade profile in this repo that produces non-placeholder frame pixels from a real gameplay path. The current smoke expects valid APF timing and non-black frame output; it does not yet require audio activity because the captured I2S stream is silent in this early bringup.
 
 ## BasicAssets Smoke Test
 

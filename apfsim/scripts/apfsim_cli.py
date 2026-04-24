@@ -349,7 +349,7 @@ def matrix_profiles(name: str) -> list[str]:
     if name == "local-fast":
         return ["mock_port_gate", "core_template"]
     if name == "local-real":
-        return ["mock_port_gate", "core_template", "basicassets", "pacman"]
+        return ["mock_port_gate", "core_template", "basicassets", "pacman", "mrjong"]
     raise ApfSimError(f"unknown matrix: {name}")
 
 

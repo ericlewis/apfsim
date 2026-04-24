@@ -1,12 +1,31 @@
 // Simulation-friendly replacement for common Quartus mf_pllbase-generated PLL wrappers.
 // It intentionally models observable behavior only: deterministic derived clocks and lock.
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_0
+`define APFSIM_MF_PLLBASE_DIVIDE_0 1
+`endif
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_1
+`define APFSIM_MF_PLLBASE_DIVIDE_1 1
+`endif
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_2
+`define APFSIM_MF_PLLBASE_DIVIDE_2 8
+`endif
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_3
+`define APFSIM_MF_PLLBASE_DIVIDE_3 8
+`endif
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_4
+`define APFSIM_MF_PLLBASE_DIVIDE_4 8
+`endif
+`ifndef APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES
+`define APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES 1024
+`endif
+
 module mf_pllbase #(
-    parameter integer DIVIDE_0 = 1,
-    parameter integer DIVIDE_1 = 1,
-    parameter integer DIVIDE_2 = 8,
-    parameter integer DIVIDE_3 = 8,
-    parameter integer DIVIDE_4 = 8,
-    parameter integer LOCK_AFTER_CYCLES = 1024
+    parameter integer DIVIDE_0 = `APFSIM_MF_PLLBASE_DIVIDE_0,
+    parameter integer DIVIDE_1 = `APFSIM_MF_PLLBASE_DIVIDE_1,
+    parameter integer DIVIDE_2 = `APFSIM_MF_PLLBASE_DIVIDE_2,
+    parameter integer DIVIDE_3 = `APFSIM_MF_PLLBASE_DIVIDE_3,
+    parameter integer DIVIDE_4 = `APFSIM_MF_PLLBASE_DIVIDE_4,
+    parameter integer LOCK_AFTER_CYCLES = `APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES
 ) (
     input  wire refclk,
     input  wire rst,
