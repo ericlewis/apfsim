@@ -14,6 +14,21 @@
         "properties": {
           "name": { "type": "string" },
           "description": { "type": "string" },
+          "kind": { "type": "string" },
+          "confidence": { "type": "string" },
+          "modules": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "memory_classes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "diagnostic_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "detect": { "type": "object" },
           "source_candidates": {
             "type": "array",
             "items": { "type": "string" }

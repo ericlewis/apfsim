@@ -140,11 +140,18 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     report = json.loads(r.stdout)
     candidate = json.loads(Path(report["paths"]["report"]).read_text())
     profile = json.loads(Path(report["paths"]["profile"]).read_text())
+    filelist = Path(report["paths"]["filelist"]).read_text()
     assert candidate["memory"]["schema"] == "apfsim.memory_dependencies.v1"
     assert set(candidate["memory"]["classes"]) >= {"sdram", "sram", "cram", "bram", "fifo"}
     assert set(candidate["memory"]["external_classes"]) >= {"sdram", "sram", "cram"}
     assert "CRAM_MODEL_REQUIRED" in {risk["code"] for risk in candidate["memory"]["risks"]}
+    assert "external_sram_pin_model" in candidate["selected_shims"]
+    assert "psram_cram_transactional_models" in candidate["selected_shims"]
+    assert "sdram_ideal_transactional" in candidate["selected_shims"]
+    assert "sram" in candidate["memory"]["available_models"]
+    assert "rtl_shims/external_memory_models.sv" in filelist
     assert profile["memory"]["models"]["sdram"]["selected"] == "ideal_transactional"
+    assert "external_sram_pin_model" in profile["shim_catalog"]
     assert any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
 
 

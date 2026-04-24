@@ -22,6 +22,22 @@
         "additionalProperties": true
       }
     },
+    "available_models": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "catalog_entry": {"type": "string"},
+            "model": {"type": "string"},
+            "confidence": {"type": "string"},
+            "source": {"type": "string"}
+          },
+          "additionalProperties": true
+        }
+      }
+    },
     "risks": {
       "type": "array",
       "items": {

@@ -19,6 +19,11 @@
         "properties": {
           "name": { "type": "string" },
           "description": { "type": "string" },
+          "kind": { "type": "string" },
+          "confidence": { "type": "string" },
+          "modules": { "type": "array", "items": { "type": "string" } },
+          "memory_classes": { "type": "array", "items": { "type": "string" } },
+          "diagnostic_codes": { "type": "array", "items": { "type": "string" } },
           "catalog_source": { "type": "string" },
           "generated_files": { "type": "integer", "minimum": 0 }
         },

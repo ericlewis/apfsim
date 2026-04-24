@@ -182,7 +182,13 @@ def test_shim_catalog_lists_public_catalog():
     assert r.returncode == 0, r.stdout + r.stderr
     doc = json.loads(r.stdout)
     assert doc["schema"] == "apfsim.shim_catalog.v1"
-    assert doc["entries"] == []
+    names = {entry["name"] for entry in doc["entries"]}
+    assert "intel_bram_shims" in names
+    assert "sdram_ideal_transactional" in names
+    assert "external_sram_pin_model" in names
+    sram = next(entry for entry in doc["entries"] if entry["name"] == "external_sram_pin_model")
+    assert sram["kind"] == "behavioral_model_library"
+    assert "sram" in sram["memory_classes"]
 
 
 def test_apply_video_shape_patches_scaler_modes_and_hints(tmp_path):

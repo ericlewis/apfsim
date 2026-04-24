@@ -122,7 +122,7 @@ Read these first:
 | Audio activity report | Distinguish no clock, no LRCK, silence, stuck sample, and active waveform. | `result.audio.activity`, `result.audio.nonzero_samples`, `result.audio.peak`, `result.audio.mclk_seen`, `result.audio.lrclk_seen`, `audio/stats.json` |
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
-| Shim/source provenance | Make sim-only VHDL or primitive shims visible in pass results. | `source_provenance.shimmed_modules[]`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
+| Shim/source provenance | Make sim-only VHDL, primitive shims, and memory model libraries visible in pass results. | `source_provenance.shimmed_modules[]`, `kind`, `confidence`, `modules`, `memory_classes`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
 | Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks` |
 
 ## Per-Core Row Normalization

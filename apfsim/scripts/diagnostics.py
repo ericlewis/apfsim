@@ -45,6 +45,18 @@ KNOWN_CODES = (
     "SHIM_REQUIRED",
     "VHDL_ENTITY_STUBBED",
     "MEMORY_MODEL_REQUIRED",
+    "MEMORY_WIDTH_MISMATCH",
+    "MEMORY_BYTE_ENABLE_MISMATCH",
+    "MEMORY_UNINITIALIZED_READ",
+    "MEMORY_OUT_OF_RANGE",
+    "MEMORY_NO_ACTIVITY",
+    "MEMORY_STALL_TIMEOUT",
+    "SDRAM_INIT_TIMEOUT",
+    "SDRAM_REFRESH_MISSING",
+    "CRAM_MODEL_REQUIRED",
+    "PSRAM_MODEL_REQUIRED",
+    "SRAM_MODEL_REQUIRED",
+    "SRAM_BUS_CONTENTION",
 )
 
 
@@ -960,6 +972,35 @@ def _diagnose_saves(
 def _diagnose_profile_risks(items: list[dict[str, Any]], profile: dict[str, Any] | None) -> None:
     if not profile:
         return
+    memory = profile.get("memory") if isinstance(profile.get("memory"), dict) else {}
+    for risk in _list(memory.get("risks")):
+        if not isinstance(risk, dict):
+            continue
+        code = str(risk.get("code") or "MEMORY_MODEL_REQUIRED")
+        if code not in KNOWN_CODES:
+            code = "MEMORY_MODEL_REQUIRED"
+        _diag(
+            items,
+            code=code,
+            phase="preflight",
+            severity=str(risk.get("severity") or "warning"),
+            summary=str(risk.get("message") or "Memory dependency requires an explicit simulation model or waiver."),
+            observed={"memory_classes": memory.get("classes", []), "external_classes": memory.get("external_classes", [])},
+            expected={"memory_model": "selected, wired, or waived"},
+            evidence=[{"artifact": "profile", "json_pointer": "/memory/risks"}],
+            likely_causes=[
+                "core depends on external RAM behavior that is not represented by the current profile",
+                "generated wrapper has not selected a catalog memory model",
+                "memory model is available but not wired to the core-specific controller",
+            ],
+            repairs=[
+                {
+                    "kind": "memory_model",
+                    "confidence": 0.64,
+                    "description": "Select or wire an explicit external RAM model and keep its confidence visible in source_provenance.json.",
+                }
+            ],
+        )
     limitations = "\n".join(str(item) for item in _list(profile.get("limitations")))
     risks = json.dumps(profile.get("risks", []), sort_keys=True) if "risks" in profile else ""
     combined = f"{limitations}\n{risks}".lower()

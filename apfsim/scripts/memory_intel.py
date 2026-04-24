@@ -80,6 +80,41 @@ RISK_DEFAULTS: dict[str, dict[str, str]] = {
     "sram": {"code": "SRAM_MODEL_REQUIRED", "severity": "error", "message": "Async external SRAM dependency detected; pin/bus model is required."},
 }
 
+AVAILABLE_MODELS: dict[str, list[dict[str, str]]] = {
+    "sdram": [
+        {
+            "catalog_entry": "sdram_ideal_transactional",
+            "model": "ideal_transactional",
+            "confidence": "bringup_only",
+            "source": "rtl_shims/sdram_sim.sv",
+        }
+    ],
+    "sram": [
+        {
+            "catalog_entry": "external_sram_pin_model",
+            "model": "async_sram_16_pin",
+            "confidence": "sim_only",
+            "source": "rtl_shims/external_memory_models.sv",
+        }
+    ],
+    "psram": [
+        {
+            "catalog_entry": "psram_cram_transactional_models",
+            "model": "psram_like_transactional",
+            "confidence": "sim_only",
+            "source": "rtl_shims/external_memory_models.sv",
+        }
+    ],
+    "cram": [
+        {
+            "catalog_entry": "psram_cram_transactional_models",
+            "model": "cram_like_transactional",
+            "confidence": "sim_only",
+            "source": "rtl_shims/external_memory_models.sv",
+        }
+    ],
+}
+
 
 def analyze_memory_sources(sources: Iterable[tuple[Path | str, str]]) -> dict[str, Any]:
     evidence: list[dict[str, str]] = []
@@ -115,6 +150,7 @@ def memory_doc(classes: list[str], evidence: list[dict[str, str]] | None = None)
         "classes": classes,
         "external_classes": external,
         "models": models,
+        "available_models": {cls: AVAILABLE_MODELS[cls] for cls in classes if cls in AVAILABLE_MODELS},
         "risks": risks,
         "evidence": evidence or [],
     }

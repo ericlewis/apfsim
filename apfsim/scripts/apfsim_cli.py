@@ -246,6 +246,11 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
         catalog_expanded.append({
             "name": name,
             "description": entry.get("description", ""),
+            "kind": entry.get("kind", ""),
+            "confidence": entry.get("confidence", ""),
+            "modules": entry.get("modules", []),
+            "memory_classes": entry.get("memory_classes", []),
+            "diagnostic_codes": entry.get("diagnostic_codes", []),
             "catalog_source": catalog_source,
             "generated_files": len(entry.get("generated_files", [])),
         })
@@ -697,6 +702,11 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
         shimmed_modules.append({
             "name": entry.get("name", ""),
             "description": entry.get("description", ""),
+            "kind": entry.get("kind", ""),
+            "confidence": entry.get("confidence", ""),
+            "modules": entry.get("modules", []),
+            "memory_classes": entry.get("memory_classes", []),
+            "diagnostic_codes": entry.get("diagnostic_codes", []),
             "catalog_source": entry.get("catalog_source", ""),
             "generated_files": entry.get("generated_files", 0),
         })
@@ -1702,6 +1712,11 @@ def cmd_shim_catalog(args: argparse.Namespace) -> int:
                 {
                     "name": name,
                     "description": entry.get("description", ""),
+                    "kind": entry.get("kind", ""),
+                    "confidence": entry.get("confidence", ""),
+                    "modules": entry.get("modules", []),
+                    "memory_classes": entry.get("memory_classes", []),
+                    "diagnostic_codes": entry.get("diagnostic_codes", []),
                     "generated_files": len(entry.get("generated_files", [])),
                     "required_paths": len(entry.get("required_paths", [])),
                 }

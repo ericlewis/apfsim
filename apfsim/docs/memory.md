@@ -47,6 +47,8 @@ Runtime provenance writes the same information to `source_provenance.json`:
 - `memory_models`
 - `memory_risks`
 
+`memory.available_models` points at catalog entries that can be used by a generated wrapper. This is deliberately separate from `memory.models`: an available model is not selected until the profile/wrapper actually instantiates or includes it.
+
 ## ROM/Data-Slot Readback Verification
 
 External RAM corruption is easiest to diagnose immediately after APF loads the asset. For bridge-readable load windows, enable readback on a slot:
@@ -85,9 +87,9 @@ Do not enable this blindly for write-only loader windows. If a real core can loa
 | `bram` | Internal FPGA RAM such as `altsyncram`, `dpram`, simple dual-port RAM. | Behavioral shims exist. |
 | `fifo` | Internal FIFO such as `dcfifo`. | Behavioral shim exists. |
 | `sdram` | SDRAM controller or Sorgelig-style request/ack SDRAM module. | Idealized four-port bring-up model exists. |
-| `sram` | External async SRAM pins or controller. | Detected, model required. |
-| `psram` | PSRAM/HyperRAM/HyperBus style external RAM. | Detected, model required. |
-| `cram` | Cartridge RAM / CRAM-like external RAM. | Detected, model required. |
+| `sram` | External async SRAM pins or controller. | Generic async 16-bit pin model exists; wrapper wiring required. |
+| `psram` | PSRAM/HyperRAM/HyperBus style external RAM. | Generic transactional model library exists; controller-specific wiring required. |
+| `cram` | Cartridge RAM / CRAM-like external RAM. | Generic transactional model library exists; controller-specific wiring required. |
 | `ddr` | DDR/LPDDR-style external RAM. | Detected, model required. |
 | `rom` | Internal ROM or ROM-like source references. | Depends on profile/data-slot strategy. |
 
@@ -99,7 +101,16 @@ It is not a Pocket-accurate SDRAM timing model. A pass with this model should be
 
 ## External RAM Direction
 
-The next external RAM work should add model families with explicit confidence levels:
+The first external RAM model library is `rtl_shims/external_memory_models.sv`:
+
+- `apfsim_async_sram_16_model`: async 16-bit SRAM pin model with `CE/OE/WE/LB/UB`, activity counters, byte-enable checks, and contention detection.
+- `apfsim_transactional_ram_model`: request/ack RAM model with configurable latency, byte enables, overrun detection, and read/write counters.
+- `apfsim_psram_like_model`: 16-bit latency-configurable transactional wrapper.
+- `apfsim_cram_like_model`: 16-bit latency-configurable transactional wrapper.
+
+These are model libraries for generated wrappers. They do not magically match every upstream controller port list.
+
+Future external RAM work should add model families with explicit confidence levels:
 
 - `ideal`: deterministic zero/low-latency transactions for early bring-up.
 - `strict_sync`: registered timing and read-after-write behavior to catch combinational assumptions.

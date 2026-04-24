@@ -148,3 +148,26 @@ def test_diagnostics_detect_data_slot_readback_mismatch(tmp_path):
     item = next(item for item in doc["diagnostics"] if item["code"] == "DATA_SLOT_READBACK_MISMATCH")
     assert item["observed"]["first_mismatch_offset"] == 2
     assert "external RAM write path corrupted ROM bytes" in item["likely_causes"]
+
+
+def test_diagnostics_surface_memory_model_profile_risk(tmp_path):
+    artifacts = tmp_path / "run"
+    write_json(artifacts / "result.json", passing_result())
+
+    doc = diagnose_artifacts(artifacts, profile={
+        "memory": {
+            "schema": "apfsim.memory_dependencies.v1",
+            "classes": ["sram"],
+            "external_classes": ["sram"],
+            "risks": [
+                {
+                    "code": "SRAM_MODEL_REQUIRED",
+                    "severity": "error",
+                    "message": "Async external SRAM dependency detected; pin/bus model is required.",
+                }
+            ],
+        }
+    })
+
+    assert "SRAM_MODEL_REQUIRED" in diagnostic_codes(doc)
+    assert doc["status"] == "fail"

@@ -1,4 +1,118 @@
 {
   "schema": "apfsim.shim_catalog.v1",
-  "entries": []
+  "entries": [
+    {
+      "name": "intel_pllbase_sim",
+      "kind": "compile_shim",
+      "confidence": "deterministic_clock",
+      "description": "Deterministic simulation replacement for Intel/Analogue PLL wrappers such as mf_pllbase and altpll.",
+      "modules": ["mf_pllbase", "altpll"],
+      "detect": {
+        "inventory_flags": ["uses_pll"],
+        "source_patterns": ["\\bmf_pllbase\\b", "\\baltpll\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/mf_pllbase_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/mf_pllbase_sim.sv"],
+      "diagnostic_codes": ["CLOCK_NOT_TOGGLING"]
+    },
+    {
+      "name": "intel_bram_shims",
+      "kind": "behavioral_model",
+      "confidence": "sim_only",
+      "description": "Behavioral internal RAM replacements for altsyncram and common dual-port RAM wrappers.",
+      "modules": ["altsyncram", "dpram"],
+      "memory_classes": ["bram"],
+      "detect": {
+        "inventory_flags": ["uses_altsyncram", "uses_bram"],
+        "memory_classes": ["bram"],
+        "source_patterns": ["\\baltsyncram\\b", "\\bdpram\\b"]
+      },
+      "filelist_entries": [
+        "{apfsim}/rtl_shims/altsyncram_sim.sv",
+        "{apfsim}/rtl_shims/dpram_sim.sv"
+      ],
+      "required_paths": [
+        "{apfsim}/rtl_shims/altsyncram_sim.sv",
+        "{apfsim}/rtl_shims/dpram_sim.sv"
+      ],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "intel_fifo_shims",
+      "kind": "behavioral_model",
+      "confidence": "sim_only",
+      "description": "Behavioral FIFO replacements for dcfifo and dcfifo_mixed_widths.",
+      "modules": ["dcfifo", "dcfifo_mixed_widths"],
+      "memory_classes": ["fifo"],
+      "detect": {
+        "inventory_flags": ["uses_dcfifo"],
+        "memory_classes": ["fifo"],
+        "source_patterns": ["\\bdcfifo\\b", "\\bdcfifo_mixed_widths\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/dcfifo_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/dcfifo_sim.sv"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "intel_lpm_arithmetic",
+      "kind": "compile_shim",
+      "confidence": "sim_only",
+      "description": "Small public behavioral subset for common lpm arithmetic primitives.",
+      "modules": ["lpm_mult", "lpm_add_sub"],
+      "detect": {
+        "source_patterns": ["\\blpm_mult\\b", "\\blpm_add_sub\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "sdram_ideal_transactional",
+      "kind": "behavioral_model",
+      "confidence": "bringup_only",
+      "description": "Idealized request/ack SDRAM model for early APF bring-up; not Pocket timing accurate.",
+      "modules": ["sdram"],
+      "memory_classes": ["sdram"],
+      "detect": {
+        "inventory_flags": ["uses_sdram"],
+        "memory_classes": ["sdram"],
+        "source_patterns": ["\\bsdram\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/sdram_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/sdram_sim.sv"],
+      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_STALL_TIMEOUT"]
+    },
+    {
+      "name": "external_sram_pin_model",
+      "kind": "behavioral_model_library",
+      "confidence": "sim_only",
+      "description": "Generic async 16-bit SRAM pin model with byte-lane, contention, and activity counters for wrappers.",
+      "modules": ["apfsim_async_sram_16_model"],
+      "memory_classes": ["sram"],
+      "detect": {
+        "inventory_flags": ["uses_sram"],
+        "memory_classes": ["sram"],
+        "source_patterns": ["\\bSRAM_", "\\bsram\\b", "async[_-]?ram"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["SRAM_MODEL_REQUIRED", "SRAM_BUS_CONTENTION", "MEMORY_BYTE_ENABLE_MISMATCH"]
+    },
+    {
+      "name": "psram_cram_transactional_models",
+      "kind": "behavioral_model_library",
+      "confidence": "sim_only",
+      "description": "Generic latency-configurable PSRAM/CRAM-like transactional models for generated wrappers.",
+      "modules": ["apfsim_transactional_ram_model", "apfsim_psram_like_model", "apfsim_cram_like_model"],
+      "memory_classes": ["psram", "cram"],
+      "detect": {
+        "inventory_flags": ["uses_psram", "uses_cram"],
+        "memory_classes": ["psram", "cram"],
+        "source_patterns": ["\\bpsram\\b", "\\bhyperram\\b", "\\bcram\\b", "cart[_-]?ram"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["PSRAM_MODEL_REQUIRED", "CRAM_MODEL_REQUIRED", "MEMORY_STALL_TIMEOUT", "MEMORY_BYTE_ENABLE_MISMATCH"]
+    }
+  ]
 }

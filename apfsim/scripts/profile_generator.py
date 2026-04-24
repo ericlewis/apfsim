@@ -222,7 +222,49 @@ def load_catalog(path: Path) -> dict[str, dict[str, Any]]:
 
 def select_shims(root: Path, inv: Any, catalog: dict[str, dict[str, Any]]) -> list[str]:
     selected: list[str] = []
+    for name, entry in catalog.items():
+        if catalog_entry_matches(root, inv, entry):
+            selected.append(name)
     return dedupe(selected)
+
+
+def catalog_entry_matches(root: Path, inv: Any, entry: dict[str, Any]) -> bool:
+    detect = entry.get("detect", {})
+    if not isinstance(detect, dict):
+        return False
+
+    for flag in detect.get("inventory_flags", []):
+        if bool(getattr(inv, str(flag), False)):
+            return True
+
+    wanted_memory = {str(item) for item in detect.get("memory_classes", [])}
+    if wanted_memory and wanted_memory.intersection(str(item) for item in getattr(inv, "memory_classes", [])):
+        return True
+
+    patterns = [str(item) for item in detect.get("source_patterns", [])]
+    if patterns and source_patterns_match(root, patterns):
+        return True
+
+    return False
+
+
+def source_patterns_match(root: Path, patterns: list[str]) -> bool:
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern, re.IGNORECASE))
+        except re.error:
+            continue
+    if not compiled:
+        return False
+    for path in hdl_paths(root)[:300]:
+        try:
+            text = path.read_text(errors="ignore")[:200000]
+        except OSError:
+            continue
+        if any(pattern.search(text) for pattern in compiled):
+            return True
+    return False
 
 
 def generated_filelist_entries(selected: list[str], catalog: dict[str, dict[str, Any]], root: Path, apfsim_dir: Path, profile_name: str) -> list[str]:
