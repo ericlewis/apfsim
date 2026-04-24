@@ -23,6 +23,22 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
     assert result["ok"] is True
     assert result["boot"]["ok"] is True
     assert result["boot"]["reset_enter_cycle"] < result["boot"]["reset_exit_cycle"] <= result["boot"]["running_cycle"]
+    assert result["boot"]["data_all_complete_cycle"] < result["boot"]["target_ready_cycle"]
+    assert result["boot"]["reset_hold_cycles"] >= 500
+    assert result["boot"]["reset_exit_to_running_cycles"] <= 2000
+    assert result["boot"]["events"] == [
+        "boot_start",
+        "status_setup",
+        "reset_enter",
+        "slot_table_populated",
+        "data_load_complete",
+        "data_slot_all_complete",
+        "rtc_sent",
+        "target_ready_to_run",
+        "before_reset_exit",
+        "reset_exit",
+        "status_running",
+    ]
 
     assert result["data"]["slots"][0]["id"] == 1
     assert result["data"]["slots"][0]["loaded_size"] == 1024
@@ -84,3 +100,22 @@ def test_failed_video_content_gate_writes_actionable_result(tmp_path):
     assert result["failed_phase"] == "assert"
     assert "video: unique color count below expectation" in result["failures"]
     assert result["video"]["unique_colors"] > 0
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_failed_reset_timing_gate_writes_actionable_result(tmp_path):
+    artifacts = tmp_path / "fail-reset-timing"
+    r = run_cli(
+        "run",
+        "--profile", "mock",
+        "--scenario", "scenarios/port_gate_fail_reset_timing.yml",
+        "--frames", "2",
+        "--artifacts", str(artifacts),
+        timeout=180,
+    )
+    assert r.returncode == 1
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["ok"] is False
+    assert result["failed_phase"] == "assert"
+    assert "reset: reset hold time below expectation" in result["failures"]
+    assert 0 < result["boot"]["reset_hold_cycles"] < 1000000

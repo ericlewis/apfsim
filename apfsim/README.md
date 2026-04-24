@@ -136,6 +136,8 @@ expect:
     require_reset_exit: true
     require_ready_to_run: true
     max_boot_cycles: 200000
+    min_reset_hold_cycles: 500
+    max_reset_exit_to_running_cycles: 2000
   save:
     require_nonvolatile_unload: true
     require_roundtrip_match: true
@@ -147,7 +149,7 @@ expect:
         mask: 0xffffffff
 ```
 
-Each run writes the measured values to `result.json`. Video frame JSON also includes content metrics: `unique_colors`, `nonzero_pixels`, `changed_pixels_from_previous`, and `frame_hash`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
+Each run writes the measured values to `result.json`. The boot block includes the APF lifecycle timeline, reset hold time, Reset Exit to running latency, and ordered lifecycle events. Video frame JSON also includes content metrics: `unique_colors`, `nonzero_pixels`, `changed_pixels_from_previous`, and `frame_hash`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
 
 ## Build Targets
 

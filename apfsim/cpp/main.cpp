@@ -176,9 +176,27 @@ static void write_result_json(
         << "\", \"start_cycle\": " << boot_trace.start_cycle
         << ", \"setup_cycle\": " << boot_trace.setup_cycle
         << ", \"reset_enter_cycle\": " << boot_trace.reset_enter_cycle
+        << ", \"slot_table_cycle\": " << boot_trace.slot_table_cycle
+        << ", \"data_load_complete_cycle\": " << boot_trace.data_load_complete_cycle
+        << ", \"data_all_complete_cycle\": " << boot_trace.data_all_complete_cycle
+        << ", \"rtc_cycle\": " << boot_trace.rtc_cycle
         << ", \"target_ready_cycle\": " << boot_trace.target_ready_cycle
+        << ", \"before_reset_exit_cycle\": " << boot_trace.before_reset_exit_cycle
         << ", \"reset_exit_cycle\": " << boot_trace.reset_exit_cycle
-        << ", \"running_cycle\": " << boot_trace.running_cycle << " },\n";
+        << ", \"running_cycle\": " << boot_trace.running_cycle
+        << ", \"reset_hold_cycles\": "
+        << (boot_trace.reset_enter_cycle && boot_trace.reset_exit_cycle && boot_trace.reset_exit_cycle >= boot_trace.reset_enter_cycle
+                ? boot_trace.reset_exit_cycle - boot_trace.reset_enter_cycle
+                : 0)
+        << ", \"reset_exit_to_running_cycles\": "
+        << (boot_trace.reset_exit_cycle && boot_trace.running_cycle && boot_trace.running_cycle >= boot_trace.reset_exit_cycle
+                ? boot_trace.running_cycle - boot_trace.reset_exit_cycle
+                : 0)
+        << ", \"events\": [";
+    for (size_t i = 0; i < boot_trace.events.size(); ++i) {
+        out << (i ? ", " : "") << "\"" << json_escape(boot_trace.events[i]) << "\"";
+    }
+    out << "] },\n";
     out << "  \"data\": { \"slots\": [\n";
     for (size_t i = 0; i < slots.size(); ++i) {
         const auto& slot = slots[i];
@@ -393,6 +411,11 @@ static void validate_reset(Assertions& asserts, const Scenario& scenario, const 
     if (trace.reset_exit_cycle && trace.running_cycle && trace.reset_exit_cycle > trace.running_cycle) asserts.fail("reset: running status occurred before Reset Exit");
     if (expect.max_setup_cycles && trace.setup_cycle && trace.setup_cycle - trace.start_cycle > expect.max_setup_cycles) asserts.fail("reset: setup took too many cycles");
     if (expect.max_boot_cycles && trace.running_cycle && trace.running_cycle - trace.start_cycle > expect.max_boot_cycles) asserts.fail("reset: boot took too many cycles");
+    if (trace.reset_enter_cycle && trace.reset_exit_cycle && trace.reset_exit_cycle >= trace.reset_enter_cycle) {
+        const auto reset_hold_cycles = trace.reset_exit_cycle - trace.reset_enter_cycle;
+        if (expect.min_reset_hold_cycles && reset_hold_cycles < expect.min_reset_hold_cycles) asserts.fail("reset: reset hold time below expectation");
+        if (expect.max_reset_hold_cycles && reset_hold_cycles > expect.max_reset_hold_cycles) asserts.fail("reset: reset hold time exceeded expectation");
+    }
     if (expect.max_reset_exit_to_running_cycles && trace.running_cycle && trace.reset_exit_cycle &&
         trace.running_cycle - trace.reset_exit_cycle > expect.max_reset_exit_to_running_cycles) {
         asserts.fail("reset: Reset Exit to running took too many cycles");

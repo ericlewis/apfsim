@@ -50,6 +50,8 @@ struct ResetExpect {
     bool require_ready_to_run = true;
     uint64_t max_setup_cycles = 0;
     uint64_t max_boot_cycles = 0;
+    uint64_t min_reset_hold_cycles = 0;
+    uint64_t max_reset_hold_cycles = 0;
     uint64_t max_reset_exit_to_running_cycles = 0;
 };
 
@@ -248,6 +250,8 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "require_ready_to_run") scenario.reset_expect.require_ready_to_run = parse_bool(value);
             else if (key == "max_setup_cycles") scenario.reset_expect.max_setup_cycles = parse_u64(value);
             else if (key == "max_boot_cycles") scenario.reset_expect.max_boot_cycles = parse_u64(value);
+            else if (key == "min_reset_hold_cycles" || key == "min_reset_enter_to_exit_cycles") scenario.reset_expect.min_reset_hold_cycles = parse_u64(value);
+            else if (key == "max_reset_hold_cycles" || key == "max_reset_enter_to_exit_cycles") scenario.reset_expect.max_reset_hold_cycles = parse_u64(value);
             else if (key == "max_reset_exit_to_running_cycles") scenario.reset_expect.max_reset_exit_to_running_cycles = parse_u64(value);
         } else if (section == Section::ExpectSave) {
             if (key == "require_nonvolatile_unload") scenario.save_expect.require_nonvolatile_unload = parse_bool(value);

@@ -52,6 +52,7 @@ expect:
     require_ready_to_run: true
     max_setup_cycles: 2000
     max_boot_cycles: 200000
+    min_reset_hold_cycles: 500
     max_reset_exit_to_running_cycles: 2000
   interact:
     min_persistent_writes: 1
