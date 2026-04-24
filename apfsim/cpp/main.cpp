@@ -1231,7 +1231,8 @@ static void validate_data(Assertions& asserts, const Scenario& scenario) {
         if (expect.require_required_slots && slot.required && !slot.deferload && slot.loaded_size == 0) {
             asserts.fail("data: required slot " + std::to_string(slot.id) + " was not loaded");
         }
-        if (expect.require_all_file_slots_loaded && !slot.deferload && !slot.file.empty() && slot.loaded_size == 0) {
+        const bool slot_file_available = !slot.file.empty() && std::filesystem::exists(slot.file);
+        if (expect.require_all_file_slots_loaded && !slot.deferload && slot_file_available && slot.loaded_size == 0) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " has a file but loaded zero bytes");
         }
         if (slot.has_expected_checksum && slot.loaded_size != 0 && slot.loaded_checksum != slot.expected_checksum) {

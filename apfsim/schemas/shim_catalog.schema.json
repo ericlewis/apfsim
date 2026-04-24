@@ -37,6 +37,10 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "fallback_required_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "verilator_flags": {
             "type": "array",
             "items": { "type": "string" }
@@ -46,6 +50,10 @@
             "items": { "type": "string" }
           },
           "filelist_entries": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "fallback_filelist_entries": {
             "type": "array",
             "items": { "type": "string" }
           },

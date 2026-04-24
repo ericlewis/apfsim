@@ -439,6 +439,13 @@ public:
 
     void load_slot(DataSlot& slot) {
         if (slot.deferload || slot.file.empty()) return;
+        if (!std::filesystem::exists(slot.file)) {
+            if (slot.required) {
+                throw std::runtime_error("required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string());
+            }
+            log_event("DATASLOT optional file missing id=" + std::to_string(slot.id) + " file=" + slot.file.string());
+            return;
+        }
         const auto bytes = read_binary_file(slot.file);
         if (slot.size_exact && bytes.size() != slot.size_exact) {
             throw std::runtime_error("slot " + std::to_string(slot.id) + " size mismatch");
@@ -493,9 +500,9 @@ public:
             report.bytes = bytes.size();
             report.path = path;
             report.checksum = fnv1a64(bytes);
-            if (!slot.file.empty()) {
+            if (!slot.file.empty() && std::filesystem::exists(slot.file)) {
                 const auto input = read_binary_file(slot.file);
-            report.input_checksum = fnv1a64(input);
+                report.input_checksum = fnv1a64(input);
                 report.matches_input = input == bytes;
             }
             reports.push_back(report);
@@ -952,8 +959,10 @@ public:
         trace_.reset_enter_cycle = now();
         trace_.events.push_back("reset_enter");
         for (auto& slot : slots) {
-            if (!slot.file.empty() && !slot.deferload) {
+            if (!slot.file.empty() && std::filesystem::exists(slot.file)) {
                 slot.loaded_size = std::filesystem::file_size(slot.file);
+            } else if (!slot.file.empty() && slot.required && !slot.deferload) {
+                throw std::runtime_error("required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string());
             }
         }
         bridge_.populate_slot_table(slots);

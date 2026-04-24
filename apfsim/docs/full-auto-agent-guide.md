@@ -228,6 +228,8 @@ Use shape auto-repair only when the video protocol is valid:
 
 Do not patch `video.json` to match a bad wrapper. A common failure is one extra active pixel from HBLK/DE polarity or edge adaptation. Fix wrapper timing before metadata.
 
+For JTFRAME Pocket exports, also check whether the logical wrapper is using the high-speed physical video clock instead of the pixel-enable cadence. If `video_shape.active_width` is an exact multiple of `video.json` width, the correct repair is usually wrapper clock/pixel-enable adaptation, not metadata patching.
+
 ## Hardware Queue Policy
 
 Only emit a copy-to-SD checklist when all are true:
@@ -268,5 +270,6 @@ Memory classification policy:
 
 - `bram` and `fifo` generally mean internal behavioral shims are enough for APF contract smoke.
 - `sdram` currently means the generic idealized SDRAM model can unblock bring-up, but hardware confidence remains limited.
-- `sram`, `psram`, `cram`, or `ddr` should be treated as requiring explicit external RAM model work unless the profile names a stronger model.
+- `sram`, `psram`, or `cram` can select public model-library scaffolds; treat the “missing model” risk as cleared only when `profile.memory.selected_model_classes` includes that class, but still require live wiring evidence before hardware confidence improves.
+- `ddr` should be treated as requiring explicit external RAM model work unless the profile names a stronger model.
 - Generated profiles emit `apfsim_memory_models.sv` for `sram`/`psram`/`cram` as a reviewable scaffold. Do not treat it as live memory validation until `memory_activity.observed` is true or a run-specific counter probe exists.

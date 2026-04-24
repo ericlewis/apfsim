@@ -38,6 +38,24 @@
         }
       }
     },
+    "selected_model_classes": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "selected_models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": {"type": "string"},
+          "catalog_entry": {"type": "string"},
+          "model": {"type": "string"},
+          "confidence": {"type": "string"},
+          "source": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
     "risks": {
       "type": "array",
       "items": {

@@ -149,7 +149,8 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     assert candidate["memory"]["schema"] == "apfsim.memory_dependencies.v1"
     assert set(candidate["memory"]["classes"]) >= {"sdram", "sram", "psram", "cram", "bram", "fifo"}
     assert set(candidate["memory"]["external_classes"]) >= {"sdram", "sram", "psram", "cram"}
-    assert "CRAM_MODEL_REQUIRED" in {risk["code"] for risk in candidate["memory"]["risks"]}
+    assert "CRAM_MODEL_REQUIRED" not in {risk["code"] for risk in candidate["memory"]["risks"]}
+    assert set(candidate["memory"]["selected_model_classes"]) >= {"sdram", "sram", "psram", "cram"}
     assert "external_sram_pin_model" in candidate["selected_shims"]
     assert "psram_cram_transactional_models" in candidate["selected_shims"]
     assert "sdram_ideal_transactional" in candidate["selected_shims"]
@@ -173,7 +174,7 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     assert ".BYTE_ENABLE_WIDTH(2)" in wrapper_text
     assert ".LATENCY_CYCLES(6)" in wrapper_text
     assert ".LATENCY_CYCLES(4)" in wrapper_text
-    assert any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
+    assert not any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
 
 
 def test_generated_external_memory_scaffold_lints_when_verilator_available(tmp_path):
@@ -230,6 +231,7 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
     include_dir.mkdir(parents=True)
     lib_dir.mkdir(parents=True)
     (lib_dir / "first.v").write_text("module first; endmodule\n")
+    (fpga_dir / "core" / "pocket_top.sv").write_text("module pocket_top; endmodule\n")
     (fpga_dir / "core" / "mf_pllbase.v").write_text("module mf_pllbase; endmodule\n")
     (fpga_dir / "core" / "extra.v").write_text("module extra; endmodule\n")
     (fpga_dir / "core" / "cpu.vhd").write_text("entity cpu is end cpu;\n")
@@ -240,10 +242,12 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
     )
     (fpga_dir / "ap_core.qsf").write_text(
         "\n".join([
+            "set_global_assignment -name TOP_LEVEL_ENTITY pocket_top",
             'set_global_assignment -name VERILOG_MACRO "SIM_HEADER=1"',
             "set_global_assignment -name SEARCH_PATH core/includes",
             "set_global_assignment -name VERILOG_FILE core/lib/first.v",
             "set_global_assignment -name SYSTEMVERILOG_FILE core/core_top.sv",
+            "set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_top.sv",
             "set_global_assignment -name VERILOG_FILE core/mf_pllbase.v",
             "set_global_assignment -name VHDL_FILE core/cpu.vhd",
             "set_global_assignment -name QIP_FILE core/ip.qip",
@@ -268,9 +272,13 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
     filelist = Path(report["paths"]["filelist"]).read_text()
     first_path = "{root}/src/fpga/core/lib/first.v"
     core_top_path = "{root}/src/fpga/core/core_top.sv"
+    pocket_top_path = "{root}/src/fpga/core/pocket_top.sv"
     assert "+define+SIM_HEADER=1" in filelist
     assert "+incdir+{root}/src/fpga/core/includes" in filelist
     assert filelist.index(first_path) < filelist.index(core_top_path)
+    assert pocket_top_path in filelist
+    assert profile["top"] == "pocket_top"
+    assert candidate["qsf"]["top_level_entity"] == "pocket_top"
     assert "{root}/src/fpga/core/qip_child.v" in filelist
     assert str(fpga_dir / "core" / "mf_pllbase.v") not in filelist
     assert str(fpga_dir / "core" / "extra.v") not in filelist
@@ -285,3 +293,135 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
     assert any(risk["code"] == "VHDL_ENTITY_STUBBED" for risk in report["risks"])
     assert any(risk["code"] == "VHDL_ENTITY_STUBBED" for risk in profile["risks"])
     assert any("VHDL files were detected" in warning for warning in candidate["warnings"])
+
+
+def test_generate_profile_accepts_setup_only_json_slot_without_address(tmp_path):
+    core = tmp_path / "openFPGA-SetupSlot"
+    write_fake_core(core, name="SetupSlot")
+    core_dir = core / "dist" / "Cores" / "example.SetupSlot"
+    data_path = core_dir / "data.json"
+    data = json.loads(data_path.read_text())
+    data["data"]["data_slots"].insert(0, {
+        "id": 0,
+        "name": "Game JSON Setup",
+        "required": True,
+        "parameters": "0x113",
+        "filename": "fake_setup.json",
+        "extensions": ["json"],
+        "size_maximum": 4096,
+    })
+    data_path.write_text(json.dumps(data) + "\n")
+    (core / "dist" / "Assets" / "fake_setup.json").write_text("{}\n")
+    out = tmp_path / "generated"
+
+    r = subprocess.run([
+        str(CLI),
+        "generate-profile",
+        "--root", str(core),
+        "--output", str(out),
+        "--json",
+    ], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    report = json.loads(r.stdout)
+    candidate = json.loads(Path(report["paths"]["report"]).read_text())
+    scenario = Path(report["paths"]["scenario"]).read_text()
+    assert "could not translate data slot" not in "\n".join(candidate["warnings"])
+    assert "setup_only: true" in scenario
+    assert "deferload: true" in scenario
+    assert "expected_total_loaded_bytes: 32" in scenario
+
+
+def test_generate_profile_selects_public_jtframe_t80_and_ddio_shims(tmp_path):
+    core = tmp_path / "openFPGA-JTFrame"
+    write_fake_core(core, name="JTFrame")
+    fpga_dir = core / "src" / "fpga"
+    jt_t80 = core / "modules" / "jtframe" / "hdl" / "cpu" / "t80" / "T80s.v"
+    jt_t80.parent.mkdir(parents=True)
+    jt_t80.write_text(
+        "module T80s(input RESET_n, input CLK, input CEN, input WAIT_n, input INT_n, input NMI_n,"
+        " input BUSRQ_n, input OUT0, input [7:0] DI, output M1_n, output MREQ_n, output IORQ_n,"
+        " output RD_n, output WR_n, output RFSH_n, output HALT_n, output BUSAK_n,"
+        " output [15:0] A, output [7:0] DOUT); endmodule\n"
+    )
+    (fpga_dir / "core" / "pocket_top.sv").write_text(
+        "module pocket_top(input refclk);"
+        " wire [1:0] clocks; wire locked; wire [0:0] ddio_out;"
+        " altera_pll #(.number_of_clocks(2)) pll(.refclk(refclk), .rst(1'b0), .outclk(clocks), .locked(locked), .fboutclk(), .fbclk(1'b0));"
+        " altddio_out #(.width(1)) ddio(.datain_h(1'b1), .datain_l(1'b0), .outclock(refclk), .outclocken(1'b1), .aset(1'b0), .aclr(1'b0), .sset(1'b0), .sclr(1'b0), .oe(1'b1), .dataout(ddio_out), .oe_out());"
+        " T80s cpu(.RESET_n(1'b1), .CLK(refclk), .CEN(1'b1), .WAIT_n(1'b1), .INT_n(1'b1), .NMI_n(1'b1), .BUSRQ_n(1'b1), .OUT0(1'b0), .DI(8'h00));"
+        " endmodule\n"
+    )
+    (fpga_dir / "ap_core.qsf").write_text(
+        "\n".join([
+            "set_global_assignment -name TOP_LEVEL_ENTITY pocket_top",
+            "set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_top.sv",
+            "",
+        ])
+    )
+    out = tmp_path / "generated"
+
+    r = subprocess.run([
+        str(CLI),
+        "generate-profile",
+        "--root", str(core),
+        "--output", str(out),
+        "--json",
+    ], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    report = json.loads(r.stdout)
+    candidate = json.loads(Path(report["paths"]["report"]).read_text())
+    details = {item["name"]: item for item in candidate["selected_shim_details"]}
+    filelist = Path(report["paths"]["filelist"]).read_text()
+    assert "intel_pllbase_sim" in candidate["selected_shims"]
+    assert "intel_ddio_shims" in candidate["selected_shims"]
+    assert "jtframe_t80s_public_translation" in candidate["selected_shims"]
+    assert details["jtframe_t80s_public_translation"]["fallback_used"] is False
+    assert details["jtframe_t80s_public_translation"]["catalog_source"] == "{root}/modules/jtframe/hdl/cpu/t80/T80s.v"
+    assert "{root}/modules/jtframe/hdl/cpu/t80/T80s.v" in filelist
+    assert "rtl_shims/jtframe_t80s_stub.sv" not in filelist
+
+
+def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
+    core = tmp_path / "openFPGA-JTLogical"
+    write_fake_core(core, name="JTLogical")
+    fpga_dir = core / "src" / "fpga"
+    (fpga_dir / "core" / "pocket_top.sv").write_text(
+        "module pocket_top(input clk_74a, input clk_74b); jtframe_pocket u_core(); endmodule\n"
+    )
+    (fpga_dir / "core" / "jtframe_pocket.sv").write_text(
+        "module jtframe_pocket(input clk_74a, input clk_74b); endmodule\n"
+    )
+    (fpga_dir / "ap_core.qsf").write_text(
+        "\n".join([
+            "set_global_assignment -name TOP_LEVEL_ENTITY pocket_top",
+            "set_global_assignment -name SYSTEMVERILOG_FILE core/jtframe_pocket.sv",
+            "set_global_assignment -name SYSTEMVERILOG_FILE core/pocket_top.sv",
+            "",
+        ])
+    )
+    out = tmp_path / "generated"
+
+    r = subprocess.run([
+        str(CLI),
+        "generate-profile",
+        "--root", str(core),
+        "--output", str(out),
+        "--json",
+    ], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    report = json.loads(r.stdout)
+    candidate = json.loads(Path(report["paths"]["report"]).read_text())
+    profile = json.loads(Path(report["paths"]["profile"]).read_text())
+    filelist = Path(report["paths"]["filelist"]).read_text()
+    wrapper = Path(report["paths"]["profile"]).parent / "apfsim_jtframe_pocket_wrapper.sv"
+    wrapper_text = wrapper.read_text()
+    assert profile["top"] == "core_top"
+    assert wrapper.exists()
+    assert "video_rgb_clock <= core_pxl_cen" in wrapper_text
+    assert "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv" in filelist
+    assert "{root}/src/fpga/core/pocket_top.sv" not in filelist
+    assert "{root}/src/fpga/core/jtframe_pocket.sv" in filelist
+    assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["top"] == "core_top"
