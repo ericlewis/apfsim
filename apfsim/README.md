@@ -131,6 +131,7 @@ expect:
   data:
     require_required_slots: true
     expected_total_loaded_bytes: 1024
+    # Per-slot `expected_checksum` / `fnv1a64` can also be set under `data_slots:`.
   reset:
     require_reset_enter: true
     require_reset_exit: true
@@ -149,7 +150,7 @@ expect:
         mask: 0xffffffff
 ```
 
-Each run writes the measured values to `result.json`. The boot block includes the APF lifecycle timeline, reset hold time, Reset Exit to running latency, and ordered lifecycle events. Video frame JSON also includes content metrics: `unique_colors`, `nonzero_pixels`, `changed_pixels_from_previous`, and `frame_hash`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
+Each run writes the measured values to `result.json`. The data block includes loaded byte counts and full 64-bit FNV-1a checksums for ROM/save slots. The boot block includes the APF lifecycle timeline, reset hold time, Reset Exit to running latency, and ordered lifecycle events. Video frame JSON also includes content metrics: `unique_colors`, `nonzero_pixels`, `changed_pixels_from_previous`, and `frame_hash`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
 
 ## Build Targets
 

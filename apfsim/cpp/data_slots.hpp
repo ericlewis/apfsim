@@ -23,6 +23,8 @@ struct DataSlot {
     size_t size_maximum = 0;
     size_t loaded_size = 0;
     uint64_t loaded_checksum = 0;
+    uint64_t expected_checksum = 0;
+    bool has_expected_checksum = false;
 };
 
 inline uint64_t fnv1a64(const std::vector<uint8_t>& bytes) {
@@ -116,6 +118,10 @@ inline std::vector<DataSlot> parse_data_json(const std::filesystem::path& path) 
         slot.deferload = json_bool_field(obj, "deferload", json_bool_field(obj, "deferred", false));
         slot.size_exact = static_cast<size_t>(json_int_field(obj, "size_exact", json_int_field(obj, "size", 0)));
         slot.size_maximum = static_cast<size_t>(json_int_field(obj, "size_maximum", json_int_field(obj, "maximum_size", 0)));
+        if (json_has_int_field(obj, "expected_checksum") || json_has_int_field(obj, "checksum") || json_has_int_field(obj, "fnv1a64")) {
+            slot.expected_checksum = json_int_field(obj, "expected_checksum", json_int_field(obj, "checksum", json_int_field(obj, "fnv1a64", 0)));
+            slot.has_expected_checksum = true;
+        }
         slots.push_back(slot);
     }
     return slots;

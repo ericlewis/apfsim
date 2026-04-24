@@ -99,6 +99,12 @@ inline std::string hex32(uint32_t value) {
     return ss.str();
 }
 
+inline std::string hex64(uint64_t value) {
+    std::ostringstream ss;
+    ss << "0x" << std::hex << std::uppercase << std::setw(16) << std::setfill('0') << value;
+    return ss.str();
+}
+
 inline std::string frame_name(uint64_t index, const char* ext) {
     std::ostringstream ss;
     ss << "frame_" << std::setw(6) << std::setfill('0') << index << "." << ext;

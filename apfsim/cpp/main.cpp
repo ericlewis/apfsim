@@ -205,7 +205,11 @@ static void write_result_json(
             << "\", \"address\": \"" << hex32(slot.address)
             << "\", \"file\": \"" << json_escape(slot.file.string())
             << "\", \"loaded_size\": " << slot.loaded_size
-            << ", \"loaded_checksum\": \"" << hex32(static_cast<uint32_t>(slot.loaded_checksum & 0xFFFFFFFFu)) << "\""
+            << ", \"loaded_checksum\": \"" << hex64(slot.loaded_checksum) << "\""
+            << ", \"expected_checksum\": ";
+        if (slot.has_expected_checksum) out << "\"" << hex64(slot.expected_checksum) << "\"";
+        else out << "null";
+        out
             << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
             << ", \"deferload\": " << (slot.deferload ? "true" : "false") << " }";
         out << (i + 1 == slots.size() ? "\n" : ",\n");
@@ -231,8 +235,7 @@ static void write_result_json(
         << ", \"unique_colors\": " << meta.unique_colors
         << ", \"nonzero_pixels\": " << meta.nonzero_pixels
         << ", \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous
-        << ", \"frame_hash\": \"" << hex32(static_cast<uint32_t>(meta.frame_hash >> 32))
-        << hex32(static_cast<uint32_t>(meta.frame_hash)).substr(2) << "\""
+        << ", \"frame_hash\": \"" << hex64(meta.frame_hash) << "\""
         << ", \"errors\": " << video.errors() << " },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
@@ -331,9 +334,20 @@ private:
 static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>& extra) {
     for (const auto& slot : extra) {
         if (auto* existing = find_slot(base, slot.id)) {
-            const auto existing_file = existing->file;
+            const auto override = *existing;
             *existing = slot;
-            if (existing->file.empty()) existing->file = existing_file;
+            if (!override.name.empty()) existing->name = override.name;
+            if (!override.file.empty()) existing->file = override.file;
+            if (override.address != 0) existing->address = override.address;
+            existing->required = existing->required || override.required;
+            existing->nonvolatile = existing->nonvolatile || override.nonvolatile;
+            existing->deferload = existing->deferload || override.deferload;
+            if (override.size_exact) existing->size_exact = override.size_exact;
+            if (override.size_maximum) existing->size_maximum = override.size_maximum;
+            if (override.has_expected_checksum) {
+                existing->expected_checksum = override.expected_checksum;
+                existing->has_expected_checksum = true;
+            }
         } else {
             base.push_back(slot);
         }
@@ -393,6 +407,9 @@ static void validate_data(Assertions& asserts, const Scenario& scenario) {
         }
         if (expect.require_all_file_slots_loaded && !slot.deferload && !slot.file.empty() && slot.loaded_size == 0) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " has a file but loaded zero bytes");
+        }
+        if (slot.has_expected_checksum && slot.loaded_size != 0 && slot.loaded_checksum != slot.expected_checksum) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " checksum mismatch");
         }
     }
     if (expect.expected_total_loaded_bytes && total_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {

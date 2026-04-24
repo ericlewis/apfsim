@@ -315,8 +315,7 @@ private:
             js << "  \"unique_colors\": " << meta.unique_colors << ",\n";
             js << "  \"nonzero_pixels\": " << meta.nonzero_pixels << ",\n";
             js << "  \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous << ",\n";
-            js << "  \"frame_hash\": \"" << hex32(static_cast<uint32_t>(meta.frame_hash >> 32))
-               << hex32(static_cast<uint32_t>(meta.frame_hash)).substr(2) << "\"\n";
+            js << "  \"frame_hash\": \"" << hex64(meta.frame_hash) << "\"\n";
             js << "}\n";
         }
     }

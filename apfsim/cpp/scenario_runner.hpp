@@ -197,6 +197,10 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "deferload") current_slot->deferload = parse_bool(value);
             else if (key == "size_exact") current_slot->size_exact = static_cast<size_t>(parse_u64(value));
             else if (key == "size_maximum") current_slot->size_maximum = static_cast<size_t>(parse_u64(value));
+            else if (key == "expected_checksum" || key == "checksum" || key == "fnv1a64") {
+                current_slot->expected_checksum = parse_u64(value);
+                current_slot->has_expected_checksum = true;
+            }
         } else if (section == Section::Inputs && current_input) {
             if (key == "frame") current_input->frame = parse_u64(value);
             else if (key == "player") current_input->player = static_cast<int>(parse_u64(value));

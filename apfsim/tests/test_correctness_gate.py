@@ -42,6 +42,8 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
 
     assert result["data"]["slots"][0]["id"] == 1
     assert result["data"]["slots"][0]["loaded_size"] == 1024
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["expected_checksum"] == "0x86EA4CAF14129F83"
     assert result["readbacks"][0]["name"] == "mock_rom_write_count"
     assert result["readbacks"][0]["ok"] is True
 
@@ -119,3 +121,23 @@ def test_failed_reset_timing_gate_writes_actionable_result(tmp_path):
     assert result["failed_phase"] == "assert"
     assert "reset: reset hold time below expectation" in result["failures"]
     assert 0 < result["boot"]["reset_hold_cycles"] < 1000000
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_failed_data_checksum_gate_writes_actionable_result(tmp_path):
+    artifacts = tmp_path / "fail-data-checksum"
+    r = run_cli(
+        "run",
+        "--profile", "mock",
+        "--scenario", "scenarios/port_gate_fail_data_checksum.yml",
+        "--frames", "2",
+        "--artifacts", str(artifacts),
+        timeout=180,
+    )
+    assert r.returncode == 1
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["ok"] is False
+    assert result["failed_phase"] == "assert"
+    assert "data: slot 1 checksum mismatch" in result["failures"]
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["expected_checksum"] == "0x0000000000000001"
