@@ -68,6 +68,13 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
     assert result["data"]["slots"][0]["observed_write_address_errors"] == 0
     assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
     assert result["data"]["slots"][0]["expected_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["verify_readback"] is True
+    assert result["data"]["slots"][0]["readback_attempted"] is True
+    assert result["data"]["slots"][0]["readback_matches"] is True
+    assert result["data"]["slots"][0]["readback_bytes"] == 1024
+    assert result["data"]["slots"][0]["readback_crc32"] == result["data"]["slots"][0]["loaded_crc32"]
+    assert result["data"]["slots"][0]["readback_checksum"] == result["data"]["slots"][0]["loaded_checksum"]
+    assert result["data"]["slots"][0]["readback_mismatch_count"] == 0
     assert result["readbacks"][0]["name"] == "mock_rom_write_count"
     assert result["readbacks"][0]["ok"] is True
 

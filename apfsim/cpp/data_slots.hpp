@@ -32,6 +32,17 @@ struct DataSlot {
     uint32_t loaded_crc32 = 0;
     uint64_t expected_checksum = 0;
     bool has_expected_checksum = false;
+    bool verify_readback = false;
+    bool readback_attempted = false;
+    bool readback_matches = false;
+    size_t readback_bytes = 0;
+    uint32_t readback_crc32 = 0;
+    uint64_t readback_checksum = 0;
+    uint64_t readback_mismatch_count = 0;
+    size_t readback_first_mismatch_offset = 0;
+    bool readback_has_first_mismatch = false;
+    uint8_t readback_expected_byte = 0;
+    uint8_t readback_observed_byte = 0;
     std::vector<uint8_t> image;
     uint64_t target_read_requests = 0;
     uint64_t target_read_bytes = 0;
@@ -142,6 +153,7 @@ inline std::vector<DataSlot> parse_data_json(const std::filesystem::path& path) 
         slot.required = json_bool_field(obj, "required", false);
         slot.nonvolatile = json_bool_field(obj, "nonvolatile", json_bool_field(obj, "persistent", false));
         slot.deferload = json_bool_field(obj, "deferload", json_bool_field(obj, "deferred", false));
+        slot.verify_readback = json_bool_field(obj, "verify_readback", json_bool_field(obj, "readback_verify", false));
         slot.size_exact = static_cast<size_t>(json_int_field(obj, "size_exact", json_int_field(obj, "size", 0)));
         slot.size_maximum = static_cast<size_t>(json_int_field(obj, "size_maximum", json_int_field(obj, "maximum_size", 0)));
         if (json_has_int_field(obj, "expected_checksum") || json_has_int_field(obj, "checksum") || json_has_int_field(obj, "fnv1a64")) {

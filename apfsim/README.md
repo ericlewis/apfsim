@@ -68,6 +68,7 @@ A passing `apfsim` run can prove that the simulated `core_top`:
 
 - accepts the expected APF boot/reset lifecycle;
 - receives data-slot payloads at configured bridge addresses;
+- optionally reads loaded slots back through the APF bridge to catch RAM/address/byte-lane corruption;
 - reaches running status;
 - handles expected host commands and target commands;
 - receives configured persistent `interact.json` writes;
@@ -77,7 +78,7 @@ A passing `apfsim` run can prove that the simulated `core_top`:
 - unloads configured nonvolatile saves;
 - produces internally consistent machine-readable artifacts.
 
-The exact proof depends on the profile and scenario expectations. Strict gates should encode expected dimensions, checksums, reset timings, audio activity, save behavior, and bridge readbacks under `expect:`.
+The exact proof depends on the profile and scenario expectations. Strict gates should encode expected dimensions, checksums, data-slot readback, reset timings, audio activity, save behavior, and bridge readbacks under `expect:`.
 
 ## What A Passing Run Does Not Prove
 

@@ -28,7 +28,7 @@ A profile run writes a stable artifact directory. Important files:
 
 - `host_commands`: every scenario-injected host command with command word, parameters, result, response words, execution cycle, transferred byte count, and output path when applicable.
 - `savestate.reports`: support/query/start/final results, response address/size, copied byte count, checksum, poll count, and saved path for `savestate_save` events.
-- `data_load`: slot ids, paths, loaded byte counts, CRC32, FNV-1a checksums, and all-complete status.
+- `data_load`: slot ids, paths, loaded byte counts, CRC32, FNV-1a checksums, optional APF bridge readback CRC/mismatch fields, and all-complete status.
 - `video_protocol`: first APF video protocol error cycle and suggested trace window.
 - `interact_readback`, `reset_action_seen`, and `control_plane`: compact control-plane probes.
 - `input_trace` and `input_effect_seen`: scripted input delivery summary.

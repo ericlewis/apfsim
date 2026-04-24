@@ -24,6 +24,9 @@ TSV_COLUMNS = [
     "audio_nonzero_samples",
     "loaded_bytes_total",
     "data_crc_list",
+    "data_readback_verified_slots",
+    "data_readback_mismatches",
+    "data_readback_failed_slots",
     "input_effect_seen",
     "interact_readback_verified",
     "reset_action_seen",
@@ -115,6 +118,13 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
     ]
     data_slots = [slot for slot in _list(data_load.get("slots")) if isinstance(slot, dict)]
     data_crc_list = [str(slot.get("crc")) for slot in data_slots if slot.get("crc")]
+    data_readback_verified_slots = sum(1 for slot in data_slots if _as_bool(slot.get("readback_attempted"), False))
+    data_readback_mismatches = sum(_as_int(slot.get("readback_mismatch_count"), 0) for slot in data_slots)
+    data_readback_failed_slots = [
+        str(slot.get("id"))
+        for slot in data_slots
+        if _as_bool(slot.get("readback_attempted"), False) and not _as_bool(slot.get("readback_matches"), True)
+    ]
 
     package_errors = _list(package.get("package_errors"))
     package_warnings = _list(package.get("package_warnings"))
@@ -144,6 +154,9 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "audio_peak": _as_int(audio.get("peak"), 0),
         "loaded_bytes_total": _as_int(data_load.get("total_loaded_bytes"), 0),
         "data_crc_list": data_crc_list,
+        "data_readback_verified_slots": data_readback_verified_slots,
+        "data_readback_mismatches": data_readback_mismatches,
+        "data_readback_failed_slots": data_readback_failed_slots,
         "input_effect_seen": _as_bool(result.get("input_effect_seen", input_doc.get("input_effect_seen")), False),
         "interact_readback_verified": _as_bool(interact_readback.get("verified"), False),
         "reset_action_seen": _as_bool(result.get("reset_action_seen"), False),
@@ -186,6 +199,9 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "data": {
             "loaded_bytes_total": row["loaded_bytes_total"],
             "crc_list": data_crc_list,
+            "readback_verified_slots": data_readback_verified_slots,
+            "readback_mismatches": data_readback_mismatches,
+            "readback_failed_slots": data_readback_failed_slots,
         },
         "source_provenance": {
             "shimmed_modules": shimmed,

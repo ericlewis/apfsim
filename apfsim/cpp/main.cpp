@@ -485,6 +485,25 @@ static void write_result_json(
         out
             << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
             << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"verify_readback\": " << (slot.verify_readback ? "true" : "false")
+            << ", \"readback_attempted\": " << (slot.readback_attempted ? "true" : "false")
+            << ", \"readback_matches\": ";
+        if (slot.readback_attempted) out << (slot.readback_matches ? "true" : "false");
+        else out << "null";
+        out << ", \"readback_bytes\": " << slot.readback_bytes
+            << ", \"readback_crc32\": \"" << hex32(slot.readback_crc32)
+            << "\", \"readback_checksum\": \"" << hex64(slot.readback_checksum)
+            << "\", \"readback_mismatch_count\": " << slot.readback_mismatch_count
+            << ", \"readback_first_mismatch_offset\": ";
+        if (slot.readback_has_first_mismatch) out << slot.readback_first_mismatch_offset;
+        else out << "null";
+        out << ", \"readback_expected_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_expected_byte);
+        else out << "null";
+        out << ", \"readback_observed_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_observed_byte);
+        else out << "null";
+        out
             << ", \"target_read_requests\": " << slot.target_read_requests
             << ", \"target_read_bytes\": " << slot.target_read_bytes
             << ", \"target_write_requests\": " << slot.target_write_requests
@@ -512,6 +531,25 @@ static void write_result_json(
             << "\", \"required\": " << (slot.required ? "true" : "false")
             << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
             << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"verify_readback\": " << (slot.verify_readback ? "true" : "false")
+            << ", \"readback_attempted\": " << (slot.readback_attempted ? "true" : "false")
+            << ", \"readback_matches\": ";
+        if (slot.readback_attempted) out << (slot.readback_matches ? "true" : "false");
+        else out << "null";
+        out << ", \"readback_bytes\": " << slot.readback_bytes
+            << ", \"readback_crc\": \"" << hex32(slot.readback_crc32)
+            << "\", \"readback_checksum_fnv1a64\": \"" << hex64(slot.readback_checksum)
+            << "\", \"readback_mismatch_count\": " << slot.readback_mismatch_count
+            << ", \"readback_first_mismatch_offset\": ";
+        if (slot.readback_has_first_mismatch) out << slot.readback_first_mismatch_offset;
+        else out << "null";
+        out << ", \"readback_expected_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_expected_byte);
+        else out << "null";
+        out << ", \"readback_observed_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_observed_byte);
+        else out << "null";
+        out
             << ", \"observed_write_words\": " << slot.observed_write_words
             << ", \"observed_write_address_errors\": " << slot.observed_write_address_errors
             << ", \"done_seen\": " << ((slot.deferload || slot.file.empty() || slot.loaded_size > 0) ? "true" : "false") << " }";
@@ -1028,6 +1066,7 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
             existing->required = existing->required || override.required;
             existing->nonvolatile = existing->nonvolatile || override.nonvolatile;
             existing->deferload = existing->deferload || override.deferload;
+            existing->verify_readback = existing->verify_readback || override.verify_readback;
             if (override.size_exact) existing->size_exact = override.size_exact;
             if (override.size_maximum) existing->size_maximum = override.size_maximum;
             if (override.has_expected_checksum) {
@@ -1037,6 +1076,13 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
         } else {
             base.push_back(slot);
         }
+    }
+}
+
+static void apply_data_expect_to_slots(Scenario& scenario) {
+    if (!(scenario.data_expect.verify_readback || scenario.data_expect.require_readback_match)) return;
+    for (auto& slot : scenario.slots) {
+        if (!slot.file.empty() && !slot.deferload) slot.verify_readback = true;
     }
 }
 
@@ -1112,6 +1158,12 @@ static void validate_data(Assertions& asserts, const Scenario& scenario) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " checksum mismatch");
         }
         const bool validate_host_boot_load = slot.loaded_size != 0 && !slot.file.empty() && !slot.deferload;
+        if (expect.require_readback_match && validate_host_boot_load && !slot.readback_attempted) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " readback was not attempted");
+        }
+        if (slot.readback_attempted && !slot.readback_matches) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " readback mismatch");
+        }
         if (validate_host_boot_load && slot.observed_write_words != slot.loaded_words) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " bridge write count mismatch");
         }
@@ -1233,6 +1285,7 @@ int main(int argc, char** argv) {
             scenario.interact.append(scenario_interact);
         }
         for (const auto& [id, file] : opt.slot_overrides) apply_slot_file_override(scenario.slots, id, file);
+        apply_data_expect_to_slots(scenario);
         if (opt.frames_override) scenario.frames = opt.frames_override;
         if (opt.timeout_cycles_override) scenario.timeout_cycles = opt.timeout_cycles_override;
         if (!opt.video_json.empty()) {

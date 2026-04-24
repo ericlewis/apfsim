@@ -453,6 +453,16 @@ public:
         slot.observed_first_write_address = 0;
         slot.observed_last_write_address = 0;
         slot.observed_write_address_errors = 0;
+        slot.readback_attempted = false;
+        slot.readback_matches = false;
+        slot.readback_bytes = 0;
+        slot.readback_crc32 = 0;
+        slot.readback_checksum = 0;
+        slot.readback_mismatch_count = 0;
+        slot.readback_first_mismatch_offset = 0;
+        slot.readback_has_first_mismatch = false;
+        slot.readback_expected_byte = 0;
+        slot.readback_observed_byte = 0;
         slot.loaded_checksum = fnv1a64(bytes);
         slot.loaded_crc32 = crc32(bytes);
         slot.image = bytes;
@@ -462,6 +472,7 @@ public:
         active_load_slot_ = &slot;
         burst_write(slot.address, bytes);
         active_load_slot_ = nullptr;
+        if (slot.verify_readback) verify_loaded_slot_readback(slot, bytes);
         log_event("DATASLOT load done id=" + std::to_string(slot.id) + " writes32=" + std::to_string((bytes.size() + 3) / 4));
         std::cout << "PASS data: slot " << slot.id << " loaded " << bytes.size() << " bytes at " << hex32(slot.address) << "\n";
     }
@@ -761,6 +772,45 @@ private:
     static bool target_range_ok(uint64_t offset, uint64_t length, size_t size) {
         const uint64_t total = static_cast<uint64_t>(size);
         return offset <= total && length <= total - offset;
+    }
+
+    void verify_loaded_slot_readback(DataSlot& slot, const std::vector<uint8_t>& expected) {
+        slot.readback_attempted = true;
+        const auto observed = burst_read(slot.address, expected.size());
+        slot.readback_bytes = observed.size();
+        slot.readback_crc32 = crc32(observed);
+        slot.readback_checksum = fnv1a64(observed);
+        slot.readback_matches = observed == expected;
+
+        const size_t compare_size = std::min(expected.size(), observed.size());
+        for (size_t i = 0; i < compare_size; ++i) {
+            if (expected[i] == observed[i]) continue;
+            ++slot.readback_mismatch_count;
+            if (!slot.readback_has_first_mismatch) {
+                slot.readback_has_first_mismatch = true;
+                slot.readback_first_mismatch_offset = i;
+                slot.readback_expected_byte = expected[i];
+                slot.readback_observed_byte = observed[i];
+            }
+        }
+        if (observed.size() != expected.size()) {
+            slot.readback_mismatch_count += observed.size() > expected.size()
+                                                ? observed.size() - expected.size()
+                                                : expected.size() - observed.size();
+            if (!slot.readback_has_first_mismatch) {
+                slot.readback_has_first_mismatch = true;
+                slot.readback_first_mismatch_offset = compare_size;
+                slot.readback_expected_byte = compare_size < expected.size() ? expected[compare_size] : 0;
+                slot.readback_observed_byte = compare_size < observed.size() ? observed[compare_size] : 0;
+            }
+        }
+
+        log_event("DATASLOT readback id=" + std::to_string(slot.id) +
+                  " bytes=" + std::to_string(observed.size()) +
+                  " crc=" + hex32(slot.readback_crc32) +
+                  " checksum=" + hex64(slot.readback_checksum) +
+                  " matches=" + std::string(slot.readback_matches ? "true" : "false") +
+                  " mismatches=" + std::to_string(slot.readback_mismatch_count));
     }
 
     std::string read_bridge_c_string(uint32_t addr, size_t max_len) {

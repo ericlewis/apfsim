@@ -106,6 +106,7 @@ module core_top (
     reg [31:0] target_filename_write_count;
 `endif
 
+    reg [31:0] rom_mem [0:255];
     reg [31:0] save_mem [0:16383];
     integer i;
 
@@ -281,6 +282,8 @@ module core_top (
                 decode_read = savestate_start_count;
             end else if (addr == 32'h50000060) begin
                 decode_read = cart_notify_last;
+            end else if (addr[31:24] == 8'h10) begin
+                decode_read = rom_mem[addr[9:2]];
             end else if (addr[31:16] == 16'h2000) begin
                 decode_read = save_mem[addr[15:2]];
             end else begin
@@ -333,6 +336,7 @@ module core_top (
         audio_mclk = 1'b0;
         audio_lrck = 1'b0;
         audio_dac = 1'b0;
+        for (i = 0; i < 256; i = i + 1) rom_mem[i] = 32'h00000000;
         for (i = 0; i < 16384; i = i + 1) save_mem[i] = 32'h00000000;
         save_mem[32'h0400] = 32'hAABBCCDD;
         save_mem[32'h0401] = 32'h11223344;
@@ -465,6 +469,7 @@ module core_top (
 `endif
             end else if (bridge_addr[31:24] == 8'h10) begin
                 rom_write_count <= rom_write_count + 32'd4;
+                rom_mem[bridge_addr[9:2]] <= bridge_wr_data;
             end else if (bridge_addr[31:16] == 16'h2000) begin
                 save_mem[bridge_addr[15:2]] <= bridge_wr_data;
             end else if (bridge_addr == 32'h50000010) begin

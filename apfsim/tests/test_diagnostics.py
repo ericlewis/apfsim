@@ -117,3 +117,34 @@ def test_diagnostics_detect_data_slot_short_write(tmp_path):
     doc = diagnose_artifacts(artifacts)
 
     assert "DATA_SLOT_LOAD_SHORT" in diagnostic_codes(doc)
+
+
+def test_diagnostics_detect_data_slot_readback_mismatch(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "assert"
+    result["message"] = "data: slot 1 readback mismatch"
+    result["data"]["slots"][0].update({
+        "loaded_size": 4,
+        "loaded_crc32": "0x12345678",
+        "loaded_checksum": "0xAAAAAAAAAAAAAAAA",
+        "verify_readback": True,
+        "readback_attempted": True,
+        "readback_matches": False,
+        "readback_bytes": 4,
+        "readback_crc32": "0xDEADBEEF",
+        "readback_checksum": "0xBBBBBBBBBBBBBBBB",
+        "readback_mismatch_count": 1,
+        "readback_first_mismatch_offset": 2,
+        "readback_expected_byte": 17,
+        "readback_observed_byte": 34,
+    })
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "DATA_SLOT_READBACK_MISMATCH" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "DATA_SLOT_READBACK_MISMATCH")
+    assert item["observed"]["first_mismatch_offset"] == 2
+    assert "external RAM write path corrupted ROM bytes" in item["likely_causes"]

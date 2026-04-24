@@ -47,6 +47,37 @@ Runtime provenance writes the same information to `source_provenance.json`:
 - `memory_models`
 - `memory_risks`
 
+## ROM/Data-Slot Readback Verification
+
+External RAM corruption is easiest to diagnose immediately after APF loads the asset. For bridge-readable load windows, enable readback on a slot:
+
+```yaml
+data_slots:
+  - id: 1
+    file: game.rom
+    address: 0x10000000
+    verify_readback: true
+
+expect:
+  data:
+    require_readback_match: true
+```
+
+`apfsim` writes the file through the normal bridge path, then reads the same APF-facing address range back and compares bytes. The stable fields are:
+
+- `result.data.slots[].readback_attempted`
+- `result.data.slots[].readback_matches`
+- `result.data.slots[].readback_crc32`
+- `result.data.slots[].readback_checksum`
+- `result.data.slots[].readback_mismatch_count`
+- `result.data.slots[].readback_first_mismatch_offset`
+- `result.data_load.slots[].readback_crc`
+- `summary.json.row.data_readback_mismatches`
+
+Readback failures are reported as `DATA_SLOT_READBACK_MISMATCH`. Common causes are byte-lane swaps, endian packing mistakes, truncated address bits, too-short write strobes, or a readback path mapped to a different RAM window than the write path.
+
+Do not enable this blindly for write-only loader windows. If a real core can load external RAM but cannot expose that memory to bridge reads, leave readback disabled and rely on checksum, write-count, and downstream boot/video evidence.
+
 ## Classes
 
 | Class | Meaning | Current Support |

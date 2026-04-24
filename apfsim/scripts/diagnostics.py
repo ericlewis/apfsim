@@ -23,6 +23,8 @@ KNOWN_CODES = (
     "DATA_SLOT_TABLE_MISSING",
     "DATA_SLOT_ADDRESS_INVALID",
     "DATA_SLOT_LOAD_SHORT",
+    "DATA_SLOT_READBACK_UNAVAILABLE",
+    "DATA_SLOT_READBACK_MISMATCH",
     "INTERACT_WRITE_MISSING",
     "VIDEO_NO_CLOCK",
     "VIDEO_NO_DE",
@@ -413,6 +415,71 @@ def diagnose_artifacts(
                         "confidence": 0.66,
                         "description": "Patch data.json or the profile slot address to match the APF bridge-visible loader window.",
                     }
+                ],
+            )
+        if _as_bool(slot.get("verify_readback"), False) and loaded_words > 0 and not _as_bool(slot.get("readback_attempted"), False):
+            _diag(
+                items,
+                code="DATA_SLOT_READBACK_UNAVAILABLE",
+                phase="data",
+                severity="error",
+                summary=f"Dataslot {slot.get('id')} required bridge readback verification, but no readback was attempted.",
+                observed={"slot": slot.get("id"), "readback_attempted": slot.get("readback_attempted")},
+                expected={"readback_attempted": True},
+                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                likely_causes=[
+                    "scenario requested readback after the slot was skipped or defer-loaded",
+                    "profile generated a readback requirement for a write-only load window",
+                    "data slot metadata and scenario slot IDs do not refer to the same slot",
+                ],
+                repairs=[
+                    {
+                        "kind": "scenario_patch",
+                        "confidence": 0.57,
+                        "description": "Enable readback only for boot-loaded slots with a bridge-readable memory window, or make the wrapper expose that window.",
+                    }
+                ],
+            )
+        if _as_bool(slot.get("readback_attempted"), False) and not _as_bool(slot.get("readback_matches"), True):
+            _diag(
+                items,
+                code="DATA_SLOT_READBACK_MISMATCH",
+                phase="data",
+                severity="error",
+                summary=f"Dataslot {slot.get('id')} bridge readback did not match the loaded file.",
+                observed={
+                    "slot": slot.get("id"),
+                    "readback_bytes": _as_int(slot.get("readback_bytes"), 0),
+                    "readback_crc32": slot.get("readback_crc32"),
+                    "readback_checksum": slot.get("readback_checksum"),
+                    "first_mismatch_offset": slot.get("readback_first_mismatch_offset"),
+                    "observed_byte": slot.get("readback_observed_byte"),
+                },
+                expected={
+                    "loaded_size": _as_int(slot.get("loaded_size"), 0),
+                    "loaded_crc32": slot.get("loaded_crc32"),
+                    "loaded_checksum": slot.get("loaded_checksum"),
+                    "expected_byte": slot.get("readback_expected_byte"),
+                },
+                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                likely_causes=[
+                    "external RAM write path corrupted ROM bytes",
+                    "bridge byte lane or endian mapping is wrong",
+                    "load address does not match the core's external RAM address decode",
+                    "write strobe or idle timing is too short for the memory controller",
+                    "bridge readback is mapped to a different memory window than bridge writes",
+                ],
+                repairs=[
+                    {
+                        "kind": "wrapper_patch",
+                        "confidence": 0.78,
+                        "description": "Inspect external RAM write byte enables, address bits, endian packing, and bridge readback mapping for this slot.",
+                    },
+                    {
+                        "kind": "profile_patch",
+                        "confidence": 0.62,
+                        "description": "Increase bridge write idle/strobe cycles or select an external memory model with realistic write acceptance timing.",
+                    },
                 ],
             )
 

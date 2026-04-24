@@ -50,6 +50,8 @@ struct AudioExpect {
 struct DataExpect {
     bool require_required_slots = true;
     bool require_all_file_slots_loaded = true;
+    bool verify_readback = false;
+    bool require_readback_match = false;
     uint64_t expected_total_loaded_bytes = 0;
 };
 
@@ -269,6 +271,7 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "required") current_slot->required = parse_bool(value);
             else if (key == "nonvolatile") current_slot->nonvolatile = parse_bool(value);
             else if (key == "deferload") current_slot->deferload = parse_bool(value);
+            else if (key == "verify_readback" || key == "readback_verify" || key == "verify_after_load") current_slot->verify_readback = parse_bool(value);
             else if (key == "size_exact") current_slot->size_exact = static_cast<size_t>(parse_u64(value));
             else if (key == "size_maximum") current_slot->size_maximum = static_cast<size_t>(parse_u64(value));
             else if (key == "expected_checksum" || key == "checksum" || key == "fnv1a64") {
@@ -350,6 +353,8 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
         } else if (section == Section::ExpectData) {
             if (key == "require_required_slots") scenario.data_expect.require_required_slots = parse_bool(value);
             else if (key == "require_all_file_slots_loaded") scenario.data_expect.require_all_file_slots_loaded = parse_bool(value);
+            else if (key == "verify_readback" || key == "readback_verify" || key == "verify_slots_readback") scenario.data_expect.verify_readback = parse_bool(value);
+            else if (key == "require_readback_match" || key == "require_readback_matches") scenario.data_expect.require_readback_match = parse_bool(value);
             else if (key == "expected_total_loaded_bytes") scenario.data_expect.expected_total_loaded_bytes = parse_u64(value);
         } else if (section == Section::ExpectReset) {
             if (key == "require_reset_enter") scenario.reset_expect.require_reset_enter = parse_bool(value);
