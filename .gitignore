@@ -1,6 +1,7 @@
 # Build outputs
 build/
 apfsim/build/
+apfsim/output/
 obj_dir/
 *.o
 *.a

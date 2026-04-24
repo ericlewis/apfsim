@@ -28,6 +28,12 @@ struct AudioStats {
     double dc_offset_l = 0.0;
     double dc_offset_r = 0.0;
     size_t clipped_samples = 0;
+    uint64_t mclk_edges = 0;
+    uint64_t lrck_edges = 0;
+    uint64_t lrck_half_period_mclk_min = 0;
+    uint64_t lrck_half_period_mclk_max = 0;
+    double avg_mclk_per_lrck_half_period = 0.0;
+    double estimated_mclk_lrck_ratio = 0.0;
 };
 
 class AudioCapture {
@@ -58,6 +64,15 @@ public:
         bit_count_ = 0;
         pending_left_ = 0;
         have_left_ = false;
+        mclk_edges_ = 0;
+        lrck_edges_ = 0;
+        mclk_since_lrck_edge_ = 0;
+        lrck_half_period_mclk_min_ = 0;
+        lrck_half_period_mclk_max_ = 0;
+        lrck_half_period_total_ = 0;
+        lrck_half_periods_seen_ = 0;
+        lrck_half_periods_recorded_ = 0;
+        have_lrck_period_ = false;
         samples_.clear();
         stats_ = {};
         stats_.sample_rate = expected_sample_rate_;
@@ -65,7 +80,22 @@ public:
 
 private:
     void on_mclk(bool lrck, bool bit) {
+        ++mclk_edges_;
+        ++mclk_since_lrck_edge_;
         if (lrck != current_lrck_) {
+            ++lrck_edges_;
+            if (have_lrck_period_) {
+                ++lrck_half_periods_seen_;
+                if (lrck_half_periods_seen_ > kIgnoredStartupLrckHalfPeriods) {
+                    lrck_half_period_mclk_min_ = lrck_half_period_mclk_min_ == 0 ? mclk_since_lrck_edge_ : std::min(lrck_half_period_mclk_min_, mclk_since_lrck_edge_);
+                    lrck_half_period_mclk_max_ = std::max(lrck_half_period_mclk_max_, mclk_since_lrck_edge_);
+                    lrck_half_period_total_ += mclk_since_lrck_edge_;
+                    ++lrck_half_periods_recorded_;
+                }
+            } else {
+                have_lrck_period_ = true;
+            }
+            mclk_since_lrck_edge_ = 0;
             bit_count_ = 0;
             shift_ = 0;
             current_lrck_ = lrck;
@@ -90,6 +120,14 @@ private:
         AudioStats s;
         s.sample_rate = expected_sample_rate_;
         s.samples = samples_.size();
+        s.mclk_edges = mclk_edges_;
+        s.lrck_edges = lrck_edges_;
+        s.lrck_half_period_mclk_min = lrck_half_period_mclk_min_;
+        s.lrck_half_period_mclk_max = lrck_half_period_mclk_max_;
+        if (lrck_half_periods_recorded_ > 0) {
+            s.avg_mclk_per_lrck_half_period = static_cast<double>(lrck_half_period_total_) / static_cast<double>(lrck_half_periods_recorded_);
+            s.estimated_mclk_lrck_ratio = s.avg_mclk_per_lrck_half_period * 2.0;
+        }
         if (samples_.empty()) return s;
         int64_t sum_l = 0;
         int64_t sum_r = 0;
@@ -164,7 +202,13 @@ private:
         out << "  \"peak_to_peak_r\": " << stats_.peak_to_peak_r << ",\n";
         out << "  \"dc_offset_l\": " << stats_.dc_offset_l << ",\n";
         out << "  \"dc_offset_r\": " << stats_.dc_offset_r << ",\n";
-        out << "  \"clipped_samples\": " << stats_.clipped_samples << "\n";
+        out << "  \"clipped_samples\": " << stats_.clipped_samples << ",\n";
+        out << "  \"mclk_edges\": " << stats_.mclk_edges << ",\n";
+        out << "  \"lrck_edges\": " << stats_.lrck_edges << ",\n";
+        out << "  \"lrck_half_period_mclk_min\": " << stats_.lrck_half_period_mclk_min << ",\n";
+        out << "  \"lrck_half_period_mclk_max\": " << stats_.lrck_half_period_mclk_max << ",\n";
+        out << "  \"avg_mclk_per_lrck_half_period\": " << stats_.avg_mclk_per_lrck_half_period << ",\n";
+        out << "  \"estimated_mclk_lrck_ratio\": " << stats_.estimated_mclk_lrck_ratio << "\n";
         out << "}\n";
     }
 
@@ -177,6 +221,16 @@ private:
     int bit_count_ = 0;
     int16_t pending_left_ = 0;
     bool have_left_ = false;
+    uint64_t mclk_edges_ = 0;
+    uint64_t lrck_edges_ = 0;
+    uint64_t mclk_since_lrck_edge_ = 0;
+    uint64_t lrck_half_period_mclk_min_ = 0;
+    uint64_t lrck_half_period_mclk_max_ = 0;
+    uint64_t lrck_half_period_total_ = 0;
+    uint64_t lrck_half_periods_seen_ = 0;
+    uint64_t lrck_half_periods_recorded_ = 0;
+    bool have_lrck_period_ = false;
+    static constexpr uint64_t kIgnoredStartupLrckHalfPeriods = 4;
     std::vector<StereoSample> samples_;
     AudioStats stats_;
 };

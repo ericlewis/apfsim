@@ -1,0 +1,52 @@
+{
+  "name": "basicchip32",
+  "description": "Official open-fpga/core-example-basicchip32 HDL smoke test with Chip32 load outcome approximated by scenario writes",
+  "external": true,
+  "root_env": "CORE_EXAMPLE_BASICCHIP32_ROOT",
+  "top": "core_top",
+  "filelist": "examples/basicchip32/filelist.f",
+  "scenario": "examples/basicchip32/basicchip32_boot.yml",
+  "metadata_jsons": {
+    "data": "{root}/data.json",
+    "video": "{root}/video.json",
+    "interact": "{root}/interact.json"
+  },
+  "frames": 3,
+  "timeout_cycles": 120000000,
+  "write_idle_cycles": 64,
+  "interact_verify_readback": false,
+  "build_dir": "build/profiles/basicchip32/obj",
+  "artifact_root": "build/profiles/basicchip32/run",
+  "limitations": [
+    "This public profile does not execute the Chip32 VM yet. It validates the HDL runtime path by loading the equivalent image/audio payloads and writing the display-enable register. A future adapter can use openfpga-chip32-sim plus bass-chip32 for full VM-driven host behavior."
+  ],
+  "required_paths": [
+    "{root}/core.json",
+    "{root}/data.json",
+    "{root}/video.json",
+    "{root}/interact.json",
+    "{root}/output/example_chip32.bin",
+    "{root}/src/chip32/example_chip32.asm",
+    "{root}/dist/assets/Test 1.dat",
+    "{root}/dist/assets/ex_image_1.bin",
+    "{root}/dist/assets/ex_image_2.bin",
+    "{root}/dist/assets/ex_image_3.bin",
+    "{root}/dist/assets/ex_audio_1.wav",
+    "{root}/src/fpga/core/core_top.v",
+    "{root}/src/fpga/core/core_bridge_cmd.v",
+    "{root}/src/fpga/core/mf_linebuf.v",
+    "{root}/src/fpga/apf/common.v",
+    "{root}/src/fpga/apf/mf_datatable.v",
+    "rtl_shims/basicassets_io_sdram_sim.v"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

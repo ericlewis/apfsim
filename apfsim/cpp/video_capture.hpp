@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -27,6 +28,7 @@ struct FrameMetadata {
     uint64_t hs_after_vs_gap_min = UINT64_MAX;
     uint64_t hs_to_de_gap_min = UINT64_MAX;
     uint64_t de_to_hs_gap_min = UINT64_MAX;
+    uint64_t vs_to_first_de_lines = UINT64_MAX;
     uint64_t de_errors = 0;
     uint64_t rgb_when_de_low_errors = 0;
     uint64_t pulse_width_errors = 0;
@@ -35,6 +37,30 @@ struct FrameMetadata {
     uint64_t nonzero_pixels = 0;
     uint64_t changed_pixels_from_previous = 0;
     uint64_t frame_hash = 0;
+};
+
+struct VideoAggregate {
+    uint64_t frames = 0;
+    size_t active_width_min = 0;
+    size_t active_width_max = 0;
+    size_t active_height_min = 0;
+    size_t active_height_max = 0;
+    uint64_t hs_pulses_min = 0;
+    uint64_t hs_pulses_max = 0;
+    uint64_t hs_after_vs_gap_min = 0;
+    uint64_t hs_to_de_gap_min = 0;
+    uint64_t de_to_hs_gap_min = 0;
+    uint64_t vs_to_first_de_lines_min = 0;
+    uint64_t vs_to_first_de_lines_max = 0;
+    uint64_t total_width_min = 0;
+    uint64_t total_width_max = 0;
+    uint64_t de_errors = 0;
+    uint64_t rgb_when_de_low_errors = 0;
+    uint64_t pulse_width_errors = 0;
+    uint64_t skip_errors = 0;
+    uint64_t total_errors = 0;
+    uint64_t unstable_dimension_frames = 0;
+    uint64_t hs_under_active_height_frames = 0;
 };
 
 class VideoCapture {
@@ -58,8 +84,56 @@ public:
 
     uint64_t frames_started() const { return frames_started_; }
     uint64_t frames_completed() const { return frames_completed_; }
+    uint64_t changed_frames() const { return changed_frames_; }
+    uint64_t max_changed_pixels_from_previous() const { return max_changed_pixels_from_previous_; }
     const FrameMetadata& last_metadata() const { return last_metadata_; }
+    const std::vector<FrameMetadata>& frame_history() const { return frame_history_; }
+    const std::vector<uint32_t>& last_frame_pixels() const { return last_frame_pixels_; }
+    size_t last_frame_width() const { return last_metadata_.active_width; }
+    size_t last_frame_height() const { return last_metadata_.active_height; }
     uint64_t errors() const { return total_errors_; }
+    uint64_t errors_after_startup_frames(uint64_t ignored_frames) const {
+        uint64_t errors = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame <= ignored_frames) continue;
+            errors += frame_error_count(frame);
+        }
+        return errors;
+    }
+    VideoAggregate aggregate_after_startup_frames(uint64_t ignored_frames) const {
+        VideoAggregate agg;
+        size_t previous_width = 0;
+        size_t previous_height = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame <= ignored_frames) continue;
+            ++agg.frames;
+            agg.active_width_min = agg.active_width_min == 0 ? frame.active_width : std::min(agg.active_width_min, frame.active_width);
+            agg.active_width_max = std::max(agg.active_width_max, frame.active_width);
+            agg.active_height_min = agg.active_height_min == 0 ? frame.active_height : std::min(agg.active_height_min, frame.active_height);
+            agg.active_height_max = std::max(agg.active_height_max, frame.active_height);
+            agg.hs_pulses_min = agg.hs_pulses_min == 0 ? frame.hs_pulses : std::min(agg.hs_pulses_min, frame.hs_pulses);
+            agg.hs_pulses_max = std::max(agg.hs_pulses_max, frame.hs_pulses);
+            agg.hs_after_vs_gap_min = agg.hs_after_vs_gap_min == 0 ? frame.hs_after_vs_gap_min : std::min(agg.hs_after_vs_gap_min, frame.hs_after_vs_gap_min);
+            agg.hs_to_de_gap_min = agg.hs_to_de_gap_min == 0 ? frame.hs_to_de_gap_min : std::min(agg.hs_to_de_gap_min, frame.hs_to_de_gap_min);
+            agg.de_to_hs_gap_min = agg.de_to_hs_gap_min == 0 ? frame.de_to_hs_gap_min : std::min(agg.de_to_hs_gap_min, frame.de_to_hs_gap_min);
+            agg.vs_to_first_de_lines_min = agg.vs_to_first_de_lines_min == 0 ? frame.vs_to_first_de_lines : std::min(agg.vs_to_first_de_lines_min, frame.vs_to_first_de_lines);
+            agg.vs_to_first_de_lines_max = std::max(agg.vs_to_first_de_lines_max, frame.vs_to_first_de_lines);
+            agg.total_width_min = agg.total_width_min == 0 ? frame.pixels_per_line_min : std::min(agg.total_width_min, frame.pixels_per_line_min);
+            agg.total_width_max = std::max(agg.total_width_max, frame.pixels_per_line_max);
+            agg.de_errors += frame.de_errors;
+            agg.rgb_when_de_low_errors += frame.rgb_when_de_low_errors;
+            agg.pulse_width_errors += frame.pulse_width_errors;
+            agg.skip_errors += frame.skip_errors;
+            agg.total_errors += frame_error_count(frame);
+            if (previous_width != 0 && (frame.active_width != previous_width || frame.active_height != previous_height)) {
+                ++agg.unstable_dimension_frames;
+            }
+            previous_width = frame.active_width;
+            previous_height = frame.active_height;
+            if (frame.active_height > 0 && frame.hs_pulses < frame.active_height) ++agg.hs_under_active_height_frames;
+        }
+        return agg;
+    }
 
     void reset_capture() {
         in_frame_ = false;
@@ -73,14 +147,20 @@ public:
         pixels_since_hs_ = 0;
         have_hs_seen_ = false;
         seen_hs_after_vs_ = false;
+        first_de_seen_ = false;
+        line_index_since_vs_ = 0;
         last_vs_rise_pixel_ = 0;
         last_hs_rise_pixel_ = 0;
         last_de_fall_pixel_ = 0;
         have_de_fall_ = false;
         total_errors_ = 0;
+        changed_frames_ = 0;
+        max_changed_pixels_from_previous_ = 0;
         current_ = {};
         last_metadata_ = {};
+        frame_history_.clear();
         previous_frame_pixels_.clear();
+        last_frame_pixels_.clear();
         current_line_.clear();
         current_lines_.clear();
         if (!dump_dir_.empty()) {
@@ -98,15 +178,22 @@ private:
         const bool skip = top->video_skip != 0;
         const uint32_t rgb = static_cast<uint32_t>(top->video_rgb) & 0x00FFFFFFu;
 
-        if (vs) ++vs_width_;
-        if (hs) ++hs_width_;
-
         if (vs && !prev_vs_) {
             if (in_frame_) finalize_frame();
             start_frame();
             last_vs_rise_pixel_ = pixel_in_frame_;
             seen_hs_after_vs_ = false;
         }
+
+        if (!in_frame_) {
+            prev_hs_ = hs;
+            prev_vs_ = vs;
+            prev_de_ = de;
+            return;
+        }
+
+        if (vs) ++vs_width_;
+        if (hs) ++hs_width_;
 
         if (hs && !prev_hs_) {
             record_line_length_if_needed();
@@ -116,6 +203,9 @@ private:
                 const uint64_t gap = pixel_in_frame_ >= last_vs_rise_pixel_ ? pixel_in_frame_ - last_vs_rise_pixel_ : 0;
                 current_.hs_after_vs_gap_min = std::min(current_.hs_after_vs_gap_min, gap);
                 seen_hs_after_vs_ = true;
+                line_index_since_vs_ = 0;
+            } else {
+                ++line_index_since_vs_;
             }
             if (have_de_fall_) {
                 const uint64_t gap = pixel_in_frame_ >= last_de_fall_pixel_ ? pixel_in_frame_ - last_de_fall_pixel_ : 0;
@@ -144,6 +234,10 @@ private:
         }
 
         if (de && !prev_de_) {
+            if (!first_de_seen_) {
+                current_.vs_to_first_de_lines = line_index_since_vs_;
+                first_de_seen_ = true;
+            }
             if (!have_hs_seen_) {
                 ++current_.de_errors;
                 ++total_errors_;
@@ -195,6 +289,7 @@ private:
         current_.hs_after_vs_gap_min = UINT64_MAX;
         current_.hs_to_de_gap_min = UINT64_MAX;
         current_.de_to_hs_gap_min = UINT64_MAX;
+        current_.vs_to_first_de_lines = UINT64_MAX;
         current_lines_.clear();
         current_line_.clear();
         de_seen_this_line_ = false;
@@ -203,7 +298,9 @@ private:
         pixels_since_hs_ = 0;
         have_hs_seen_ = false;
         seen_hs_after_vs_ = false;
+        first_de_seen_ = false;
         have_de_fall_ = false;
+        line_index_since_vs_ = 0;
     }
 
     void close_line_if_needed() {
@@ -222,12 +319,12 @@ private:
     }
 
     void finalize_frame() {
-        record_line_length_if_needed();
         close_line_if_needed();
         current_.active_height = current_lines_.size();
         if (current_.hs_after_vs_gap_min == UINT64_MAX) current_.hs_after_vs_gap_min = 0;
         if (current_.hs_to_de_gap_min == UINT64_MAX) current_.hs_to_de_gap_min = 0;
         if (current_.de_to_hs_gap_min == UINT64_MAX) current_.de_to_hs_gap_min = 0;
+        if (current_.vs_to_first_de_lines == UINT64_MAX) current_.vs_to_first_de_lines = 0;
         if (expected_width_ && current_.active_width != expected_width_) {
             ++current_.de_errors;
             ++total_errors_;
@@ -239,7 +336,12 @@ private:
         compute_content_metrics();
         ++frames_completed_;
         last_metadata_ = current_;
+        frame_history_.push_back(current_);
         if (!dump_dir_.empty()) dump_frame(current_, current_lines_);
+    }
+
+    static uint64_t frame_error_count(const FrameMetadata& meta) {
+        return meta.de_errors + meta.rgb_when_de_low_errors + meta.pulse_width_errors + meta.skip_errors;
     }
 
     void compute_content_metrics() {
@@ -263,7 +365,8 @@ private:
             }
         }
         uint64_t changed = 0;
-        if (previous_frame_pixels_.size() == pixels.size()) {
+        const bool had_previous = previous_frame_pixels_.size() == pixels.size();
+        if (had_previous) {
             for (size_t i = 0; i < pixels.size(); ++i) {
                 if (pixels[i] != previous_frame_pixels_[i]) ++changed;
             }
@@ -271,7 +374,12 @@ private:
         current_.unique_colors = colors.size();
         current_.nonzero_pixels = nonzero;
         current_.changed_pixels_from_previous = changed;
+        if (had_previous && changed != 0) {
+            ++changed_frames_;
+            max_changed_pixels_from_previous_ = std::max(max_changed_pixels_from_previous_, changed);
+        }
         current_.frame_hash = hash;
+        last_frame_pixels_ = pixels;
         previous_frame_pixels_ = std::move(pixels);
     }
 
@@ -308,10 +416,12 @@ private:
             js << "  \"hs_after_vs_gap_min\": " << meta.hs_after_vs_gap_min << ",\n";
             js << "  \"hs_to_de_gap_min\": " << meta.hs_to_de_gap_min << ",\n";
             js << "  \"de_to_hs_gap_min\": " << meta.de_to_hs_gap_min << ",\n";
+            js << "  \"vs_to_first_de_lines\": " << meta.vs_to_first_de_lines << ",\n";
             js << "  \"de_errors\": " << meta.de_errors << ",\n";
             js << "  \"rgb_when_de_low_errors\": " << meta.rgb_when_de_low_errors << ",\n";
             js << "  \"pulse_width_errors\": " << meta.pulse_width_errors << ",\n";
             js << "  \"skip_errors\": " << meta.skip_errors << ",\n";
+            js << "  \"errors\": " << frame_error_count(meta) << ",\n";
             js << "  \"unique_colors\": " << meta.unique_colors << ",\n";
             js << "  \"nonzero_pixels\": " << meta.nonzero_pixels << ",\n";
             js << "  \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous << ",\n";
@@ -340,14 +450,20 @@ private:
     uint64_t last_hs_rise_pixel_ = 0;
     uint64_t last_de_fall_pixel_ = 0;
     uint64_t total_errors_ = 0;
+    uint64_t changed_frames_ = 0;
+    uint64_t max_changed_pixels_from_previous_ = 0;
     bool have_hs_seen_ = false;
     bool seen_hs_after_vs_ = false;
+    bool first_de_seen_ = false;
     bool have_de_fall_ = false;
+    uint64_t line_index_since_vs_ = 0;
     FrameMetadata current_;
     FrameMetadata last_metadata_;
+    std::vector<FrameMetadata> frame_history_;
     std::vector<uint32_t> current_line_;
     std::vector<std::vector<uint32_t>> current_lines_;
     std::vector<uint32_t> previous_frame_pixels_;
+    std::vector<uint32_t> last_frame_pixels_;
 };
 
 inline std::pair<size_t, size_t> parse_video_json_dimensions(const std::filesystem::path& path) {

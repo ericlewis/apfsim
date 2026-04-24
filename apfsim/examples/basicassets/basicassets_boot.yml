@@ -2,17 +2,21 @@ name: basicassets_boot
 data_slots:
   - id: 1
     name: Background
-    file: /Users/ericlewis/Developer/core-example-basicassets/dist/assets/ex_image_1.bin
+    file: {root}/dist/assets/ex_image_1.bin
     address: 0x00000000
     required: true
     size_exact: 184320
   - id: 99
     name: Audio
-    file: /Users/ericlewis/Developer/core-example-basicassets/dist/assets/ex_audio_1.wav
+    file: {root}/dist/assets/ex_audio_1.wav
     address: 0x00400000
     required: true
     size_maximum: 0x3C00000
-inputs: []
+inputs:
+  - frame: 1
+    player: 1
+    button: X
+    hold_frames: 2
 run:
   until_frames: 3
   timeout_cycles: 120000000
@@ -21,5 +25,28 @@ expect:
   video:
     active_width: 320
     active_height: 288
+    min_frames: 2
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
+    min_nonzero_pixels: 100
   audio:
     min_samples: 64
+    expected_mclk_lrck_ratio: 256
+    max_mclk_lrck_ratio_error: 2
+  data:
+    require_required_slots: true
+    require_all_file_slots_loaded: true
+    expected_total_loaded_bytes: 1528144
+  input:
+    require_scripted_activity: true
+  interact:
+    min_persistent_writes: 1
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true

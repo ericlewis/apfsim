@@ -22,12 +22,24 @@ HOST_COMMANDS = {
     0x008A: "Data slot update",
     0x008F: "Data slot access all complete",
     0x0090: "Real-time clock data",
+    0x00A0: "Savestate Start/Query",
+    0x00A4: "Savestate Load/Query",
+    0x00B0: "OS notify menu state",
     0x00B1: "OS notify cartridge adapter",
+    0x00B2: "OS notify docked state",
     0x00B8: "OS notify display mode",
 }
 
 TARGET_COMMANDS = {
     0x0140: "Ready to Run",
+    0x0152: "Debug Event Log",
+    0x0180: "Data slot read",
+    0x0181: "Data slot read 48-bit",
+    0x0184: "Data slot write",
+    0x0185: "Data slot write 48-bit",
+    0x0188: "Data slot flush",
+    0x0190: "Get filename of data slot",
+    0x0192: "Open new file into data slot",
 }
 
 STATUS_CODES = {
@@ -46,7 +58,11 @@ HOST_COMMAND_TO_KIND = {
     0x008A: "dataslot_update",
     0x008F: "dataslot_all_complete",
     0x0090: "rtc",
+    0x00A0: "savestate_start_query",
+    0x00A4: "savestate_load_query",
+    0x00B0: "os_notify_menu_state",
     0x00B1: "os_notify_cartridge_adapter",
+    0x00B2: "os_notify_docked_state",
     0x00B8: "os_notify_display_mode",
 }
 
@@ -155,6 +171,12 @@ def _detect_host_command(line_no: int, text: str, fields: dict[str, int], words:
             ("real time clock data", 0x0090),
             ("real-time clock data", 0x0090),
             ("rtc", 0x0090),
+            ("savestate start", 0x00A0),
+            ("savestate load", 0x00A4),
+            ("menu state", 0x00B0),
+            ("cartridge adapter", 0x00B1),
+            ("docked state", 0x00B2),
+            ("display mode", 0x00B8),
         ]
         for needle, value in name_to_command:
             if needle in words or needle in lower:
@@ -196,6 +218,27 @@ def _detect_target_command(line_no: int, text: str, fields: dict[str, int], word
     elif "ready to run" in lower or "ready to run" in words:
         command = 0x0140
     else:
+        name_to_command = [
+            ("debug event log", 0x0152),
+            ("data slot read 48", 0x0181),
+            ("dataslot read 48", 0x0181),
+            ("data slot read", 0x0180),
+            ("dataslot read", 0x0180),
+            ("data slot write 48", 0x0185),
+            ("dataslot write 48", 0x0185),
+            ("data slot write", 0x0184),
+            ("dataslot write", 0x0184),
+            ("data slot flush", 0x0188),
+            ("dataslot flush", 0x0188),
+            ("get filename", 0x0190),
+            ("open new file", 0x0192),
+        ]
+        for needle, value in name_to_command:
+            if needle in words or needle in lower:
+                command = value
+                break
+
+    if command is None:
         for value in _all_hex_values(text):
             candidate = _short_command_id(value)
             if candidate in TARGET_COMMANDS:
@@ -204,7 +247,18 @@ def _detect_target_command(line_no: int, text: str, fields: dict[str, int], word
 
     if command not in TARGET_COMMANDS:
         return None
-    kind = "target_ready_to_run" if command == 0x0140 else "target_command"
+    target_kinds = {
+        0x0140: "target_ready_to_run",
+        0x0152: "target_debug_event_log",
+        0x0180: "target_dataslot_read",
+        0x0181: "target_dataslot_read",
+        0x0184: "target_dataslot_write",
+        0x0185: "target_dataslot_write",
+        0x0188: "target_dataslot_flush",
+        0x0190: "target_get_dataslot_filename",
+        0x0192: "target_open_dataslot_file",
+    }
+    kind = target_kinds.get(command, "target_command")
     return _event(kind, line_no, text, TARGET_COMMANDS[command], command, fields)
 
 

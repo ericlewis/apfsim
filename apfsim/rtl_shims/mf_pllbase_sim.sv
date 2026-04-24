@@ -15,6 +15,9 @@
 `ifndef APFSIM_MF_PLLBASE_DIVIDE_4
 `define APFSIM_MF_PLLBASE_DIVIDE_4 8
 `endif
+`ifndef APFSIM_MF_PLLBASE_DIVIDE_5
+`define APFSIM_MF_PLLBASE_DIVIDE_5 8
+`endif
 `ifndef APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES
 `define APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES 1024
 `endif
@@ -25,6 +28,7 @@ module mf_pllbase #(
     parameter integer DIVIDE_2 = `APFSIM_MF_PLLBASE_DIVIDE_2,
     parameter integer DIVIDE_3 = `APFSIM_MF_PLLBASE_DIVIDE_3,
     parameter integer DIVIDE_4 = `APFSIM_MF_PLLBASE_DIVIDE_4,
+    parameter integer DIVIDE_5 = `APFSIM_MF_PLLBASE_DIVIDE_5,
     parameter integer LOCK_AFTER_CYCLES = `APFSIM_MF_PLLBASE_LOCK_AFTER_CYCLES
 ) (
     input  wire refclk,
@@ -34,6 +38,7 @@ module mf_pllbase #(
     output reg  outclk_2,
     output reg  outclk_3,
     output reg  outclk_4,
+    output reg  outclk_5,
     output reg  locked
 );
     integer lock_count;
@@ -42,6 +47,7 @@ module mf_pllbase #(
     integer cnt2;
     integer cnt3;
     integer cnt4;
+    integer cnt5;
 
     initial begin
         outclk_0 = 1'b0;
@@ -49,6 +55,7 @@ module mf_pllbase #(
         outclk_2 = 1'b0;
         outclk_3 = 1'b0;
         outclk_4 = 1'b0;
+        outclk_5 = 1'b0;
         locked = 1'b0;
         lock_count = 0;
         cnt0 = 0;
@@ -56,6 +63,7 @@ module mf_pllbase #(
         cnt2 = 0;
         cnt3 = 0;
         cnt4 = 0;
+        cnt5 = 0;
     end
 
     always @(posedge refclk or posedge rst) begin
@@ -65,6 +73,7 @@ module mf_pllbase #(
             outclk_2 <= 1'b0;
             outclk_3 <= 1'b0;
             outclk_4 <= 1'b0;
+            outclk_5 <= 1'b0;
             locked <= 1'b0;
             lock_count <= 0;
             cnt0 <= 0;
@@ -72,6 +81,7 @@ module mf_pllbase #(
             cnt2 <= 0;
             cnt3 <= 0;
             cnt4 <= 0;
+            cnt5 <= 0;
         end else begin
             if (lock_count >= LOCK_AFTER_CYCLES) locked <= 1'b1;
             else lock_count <= lock_count + 1;
@@ -81,11 +91,13 @@ module mf_pllbase #(
             cnt2 <= (cnt2 + 1) % (DIVIDE_2 < 1 ? 1 : DIVIDE_2);
             cnt3 <= (cnt3 + 1) % (DIVIDE_3 < 1 ? 1 : DIVIDE_3);
             cnt4 <= (cnt4 + 1) % (DIVIDE_4 < 1 ? 1 : DIVIDE_4);
+            cnt5 <= (cnt5 + 1) % (DIVIDE_5 < 1 ? 1 : DIVIDE_5);
             if (cnt0 == 0) outclk_0 <= ~outclk_0;
             if (cnt1 == 0) outclk_1 <= ~outclk_1;
             if (cnt2 == 0) outclk_2 <= ~outclk_2;
             if (cnt3 == 0) outclk_3 <= ~outclk_3;
             if (cnt4 == 0) outclk_4 <= ~outclk_4;
+            if (cnt5 == 0) outclk_5 <= ~outclk_5;
         end
     end
 endmodule

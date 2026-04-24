@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/video_apply.schema.json",
+  "title": "apfsim video shape application report",
+  "type": "object",
+  "required": ["schema", "ok", "changed", "output", "simulated", "patches", "failures", "warnings"],
+  "properties": {
+    "schema": { "const": "apfsim.video_apply.v1" },
+    "ok": { "type": "boolean" },
+    "changed": { "type": "boolean" },
+    "output": { "type": "string" },
+    "backup": { "type": "string" },
+    "shape_source": { "type": "string" },
+    "simulated": { "type": "object" },
+    "patches": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "failures": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

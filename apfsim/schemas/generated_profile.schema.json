@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/generated_profile.schema.json",
+  "title": "apfsim generated profile candidate",
+  "type": "object",
+  "required": ["schema", "profile", "root", "paths", "selected_shims", "warnings"],
+  "properties": {
+    "schema": { "const": "apfsim.generated_profile.v1" },
+    "profile": { "type": "string" },
+    "root": { "type": "string" },
+    "output_dir": { "type": "string" },
+    "status": { "type": "string" },
+    "action": { "type": "string" },
+    "paths": {
+      "type": "object",
+      "required": ["profile", "filelist", "scenario"],
+      "properties": {
+        "profile": { "type": "string" },
+        "filelist": { "type": "string" },
+        "scenario": { "type": "string" },
+        "notes": { "type": "string" },
+        "report": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "selected_shims": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "inventory": { "type": "object" }
+  },
+  "additionalProperties": true
+}

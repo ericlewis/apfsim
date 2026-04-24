@@ -1,4 +1,4 @@
-name: agg23_core_template_boot
+name: core_template_boot
 data_slots: []
 inputs: []
 run:
@@ -9,5 +9,19 @@ expect:
   video:
     active_width: 320
     active_height: 240
+    min_frames: 2
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
   audio:
     min_samples: 64
+    expected_mclk_lrck_ratio: 256
+    max_mclk_lrck_ratio_error: 2
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true

@@ -1,0 +1,11 @@
++incdir+rtl_shims
++incdir+{root}/src/fpga/apf
++incdir+{root}/src/fpga/core
+rtl_shims/mf_pllbase_sim.sv
+rtl_shims/altsyncram_sim.sv
+rtl_shims/dcfifo_sim.sv
+rtl_shims/vendor_ip_stubs.sv
+{root}/src/fpga/apf/common.v
+{root}/src/fpga/apf/mf_datatable.v
+{root}/src/fpga/core/core_bridge_cmd.v
+build/generated/interact_core_top_sim.v

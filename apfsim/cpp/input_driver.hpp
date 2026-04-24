@@ -2,6 +2,8 @@
 
 #include "sim_time.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -50,8 +52,8 @@ inline uint32_t button_mask(Button b) {
         case Button::R1: return 1u << 9;
         case Button::L2: return 1u << 10;
         case Button::R2: return 1u << 11;
-        case Button::Select: return 1u << 12;
-        case Button::Start: return 1u << 13;
+        case Button::Select: return 1u << 14;
+        case Button::Start: return 1u << 15;
     }
     return 0;
 }
@@ -65,9 +67,35 @@ struct InputEvent {
 
 class InputDriver {
 public:
-    void add_event(InputEvent event) { events_.push_back(event); }
+    void add_event(InputEvent event) {
+        events_.push_back(event);
+        delivered_events_.push_back(false);
+    }
     bool has_events() const { return !events_.empty(); }
     bool ever_active() const { return ever_active_; }
+    size_t scripted_event_count() const { return events_.size(); }
+    size_t delivered_event_count() const {
+        return static_cast<size_t>(std::count(delivered_events_.begin(), delivered_events_.end(), true));
+    }
+    bool all_scripted_events_delivered() const { return delivered_event_count() == events_.size(); }
+
+    void set_button(int player, Button button, bool pressed) {
+        if (player < 1 || player > 4) return;
+        const auto mask = button_mask(button);
+        auto& live = live_keys_[player - 1];
+        if (pressed) {
+            live |= mask;
+            ever_active_ = true;
+        } else {
+            live &= ~mask;
+        }
+        recompute();
+    }
+
+    void clear_live_buttons() {
+        live_keys_[0] = live_keys_[1] = live_keys_[2] = live_keys_[3] = 0;
+        recompute();
+    }
 
     void set_controller_type(int player, uint8_t type) {
         if (player < 1 || player > 4) return;
@@ -97,18 +125,25 @@ public:
 
 private:
     void recompute() {
-        keys_[0] = keys_[1] = keys_[2] = keys_[3] = 0;
-        for (const auto& event : events_) {
+        keys_[0] = live_keys_[0];
+        keys_[1] = live_keys_[1];
+        keys_[2] = live_keys_[2];
+        keys_[3] = live_keys_[3];
+        for (size_t i = 0; i < events_.size(); ++i) {
+            const auto& event = events_[i];
             if (event.player < 1 || event.player > 4) continue;
             if (current_frame_ >= event.frame && current_frame_ < event.frame + event.hold_frames) {
                 keys_[event.player - 1] |= button_mask(event.button);
                 ever_active_ = true;
+                delivered_events_[i] = true;
             }
         }
     }
 
     std::vector<InputEvent> events_;
+    std::vector<bool> delivered_events_;
     uint64_t current_frame_ = 0;
+    uint32_t live_keys_[4] = {0, 0, 0, 0};
     uint32_t keys_[4] = {0, 0, 0, 0};
     uint32_t joy_[4] = {0x80808080u, 0x80808080u, 0x80808080u, 0x80808080u};
     uint32_t trig_[4] = {0, 0, 0, 0};

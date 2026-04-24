@@ -22,9 +22,23 @@ struct DataSlot {
     size_t size_exact = 0;
     size_t size_maximum = 0;
     size_t loaded_size = 0;
+    size_t loaded_words = 0;
+    uint32_t loaded_last_address = 0;
+    size_t observed_write_words = 0;
+    uint32_t observed_first_write_address = 0;
+    uint32_t observed_last_write_address = 0;
+    uint64_t observed_write_address_errors = 0;
     uint64_t loaded_checksum = 0;
     uint64_t expected_checksum = 0;
     bool has_expected_checksum = false;
+    std::vector<uint8_t> image;
+    uint64_t target_read_requests = 0;
+    uint64_t target_read_bytes = 0;
+    uint64_t target_write_requests = 0;
+    uint64_t target_write_bytes = 0;
+    uint64_t target_flush_requests = 0;
+    uint64_t target_filename_requests = 0;
+    uint64_t target_open_requests = 0;
 };
 
 inline uint64_t fnv1a64(const std::vector<uint8_t>& bytes) {

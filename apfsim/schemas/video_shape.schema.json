@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/video_shape.schema.json",
+  "title": "apfsim video shape report",
+  "type": "object",
+  "required": ["schema", "source_result", "result_ok", "video_shape"],
+  "properties": {
+    "schema": { "const": "apfsim.video_shape.v1" },
+    "source_result": { "type": "string" },
+    "result_ok": { "type": "boolean" },
+    "status": { "type": "string" },
+    "video_phase_status": { "type": "string" },
+    "video_shape": {
+      "type": "object",
+      "required": [
+        "active_width",
+        "active_height",
+        "total_width_min",
+        "total_width_max",
+        "hs_to_de_gap_min",
+        "de_to_hs_gap_min",
+        "vs_to_first_de_lines",
+        "de_errors",
+        "pulse_width_errors",
+        "skip_errors",
+        "stable_dimensions"
+      ],
+      "properties": {
+        "active_width": { "type": "integer", "minimum": 1 },
+        "active_height": { "type": "integer", "minimum": 1 },
+        "active_width_min": { "type": "integer", "minimum": 0 },
+        "active_width_max": { "type": "integer", "minimum": 0 },
+        "active_height_min": { "type": "integer", "minimum": 0 },
+        "active_height_max": { "type": "integer", "minimum": 0 },
+        "total_width_min": { "type": "integer", "minimum": 1 },
+        "total_width_max": { "type": "integer", "minimum": 1 },
+        "pixels_per_line_min": { "type": "integer", "minimum": 0 },
+        "pixels_per_line_max": { "type": "integer", "minimum": 0 },
+        "hs_after_vs_gap_min": { "type": "integer", "minimum": 0 },
+        "hs_to_de_gap_min": { "type": "integer", "minimum": 0 },
+        "de_to_hs_gap_min": { "type": "integer", "minimum": 0 },
+        "vs_to_first_de_lines": { "type": "integer", "minimum": 0 },
+        "vs_to_first_de_lines_min": { "type": "integer", "minimum": 0 },
+        "vs_to_first_de_lines_max": { "type": "integer", "minimum": 0 },
+        "hs_pulses_min": { "type": "integer", "minimum": 0 },
+        "hs_pulses_max": { "type": "integer", "minimum": 0 },
+        "de_errors": { "type": "integer", "minimum": 0 },
+        "rgb_when_de_low_errors": { "type": "integer", "minimum": 0 },
+        "pulse_width_errors": { "type": "integer", "minimum": 0 },
+        "skip_errors": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "stable_dimensions": { "type": "boolean" },
+        "protocol_valid": { "type": "boolean" },
+        "frames_measured": { "type": "integer", "minimum": 0 },
+        "frames_completed": { "type": "integer", "minimum": 0 },
+        "ignored_startup_frames": { "type": "integer", "minimum": 0 },
+        "source_signals": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

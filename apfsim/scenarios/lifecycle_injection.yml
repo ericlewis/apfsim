@@ -1,0 +1,116 @@
+name: mock_lifecycle_injection
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+    expected_checksum: 0x86EA4CAF14129F83
+  - id: 4
+    name: HISCORE
+    file: examples/assets/mock.hi
+    address: 0x20000000
+    nonvolatile: true
+    size_maximum: 1024
+host_commands:
+  - name: cart_notify_boot_shape
+    frame: 0
+    command: os_notify_cartridge_adapter
+    p0: 0x00008000
+  - name: menu_open
+    frame: 1
+    command: os_notify_menu_state
+    p0: 1
+  - name: docked_false
+    frame: 1
+    command: os_notify_docked_state
+    p0: 0
+  - name: display_crt
+    frame: 2
+    command: os_notify_display_mode
+    p0: 0x00001000
+  - name: runtime_reload_slot_1
+    frame: 2
+    command: data_slot_update
+    slot: 1
+    file: examples/assets/mock.rom
+    size: 1024
+    update_slot_table: true
+  - name: savestate_save
+    frame: 3
+    command: savestate_save
+    output: mock_state.sta
+  - name: menu_close
+    frame: 3
+    command: os_notify_menu_state
+    p0: 0
+run:
+  until_frames: 4
+  timeout_cycles: 5000000
+expect:
+  video:
+    active_width: 256
+    active_height: 224
+    min_frames: 4
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+  audio:
+    min_samples: 64
+    require_changing: true
+    min_peak_to_peak: 32
+    expected_mclk_lrck_ratio: 64
+    max_mclk_lrck_ratio_error: 0
+    max_lrck_half_period_jitter: 0
+  data:
+    require_required_slots: true
+    require_all_file_slots_loaded: true
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true
+  save:
+    require_nonvolatile_unload: true
+  bridge:
+    require_little_endian: true
+    require_slot_table: true
+    min_host_commands: 13
+    min_target_commands: 1
+    readbacks:
+      - name: menu_state_last
+        address: 0x50000040
+        value: 0
+        mask: 0xffffffff
+      - name: docked_state_last
+        address: 0x50000044
+        value: 0
+        mask: 0xffffffff
+      - name: display_mode_last
+        address: 0x50000048
+        value: 0x00001000
+        mask: 0xffffffff
+      - name: runtime_update_count
+        address: 0x5000004c
+        value: 1
+        mask: 0xffffffff
+      - name: runtime_update_slot
+        address: 0x50000050
+        value: 1
+        mask: 0xffffffff
+      - name: runtime_update_size
+        address: 0x50000054
+        value: 1024
+        mask: 0xffffffff
+      - name: savestate_query_count
+        address: 0x50000058
+        value: 5
+        mask: 0xffffffff
+      - name: savestate_start_count
+        address: 0x5000005c
+        value: 1
+        mask: 0xffffffff
+      - name: cart_notify_last
+        address: 0x50000060
+        value: 0x00008000
+        mask: 0xffffffff

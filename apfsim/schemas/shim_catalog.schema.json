@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/shim_catalog.schema.json",
+  "title": "apfsim shim/substitution catalog",
+  "type": "object",
+  "required": ["schema", "entries"],
+  "properties": {
+    "schema": { "const": "apfsim.shim_catalog.v1" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "source_candidates": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "required_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "verilator_flags": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "expected_artifacts": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "filelist_entries": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "generated_files": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

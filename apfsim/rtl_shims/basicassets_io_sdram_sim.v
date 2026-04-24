@@ -34,6 +34,7 @@ module io_sdram #(
 
     input  wire            word_rd,
     input  wire            word_wr,
+    input  wire    [1:0]   word_wrmask,
     input  wire    [23:0]  word_addr,
     input  wire    [31:0]  word_data,
     output reg     [31:0]  word_q,

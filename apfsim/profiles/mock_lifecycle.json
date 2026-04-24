@@ -1,0 +1,35 @@
+{
+  "name": "mock_lifecycle",
+  "description": "Built-in APF lifecycle injection regression covering OS notify, runtime data-slot update, and savestate save/query blob transfer",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/lifecycle_injection.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "frames": 4,
+  "timeout_cycles": 5000000,
+  "target_service_interval_cycles": 1024,
+  "build_dir": "build/profiles/mock_lifecycle/obj",
+  "artifact_root": "build/profiles/mock_lifecycle/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "examples/assets/mock.rom",
+    "examples/assets/mock.hi"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "bridge_summary.json",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json",
+    "saves/slot_4.bin",
+    "savestates/mock_state.sta"
+  ]
+}

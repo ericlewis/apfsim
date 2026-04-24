@@ -1,0 +1,63 @@
+name: mock_target_command_smoke
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+    expected_checksum: 0x86EA4CAF14129F83
+  - id: 4
+    name: HISCORE
+    address: 0x20000000
+    nonvolatile: true
+    size_maximum: 1024
+run:
+  until_frames: 4
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224
+    min_frames: 4
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
+  audio:
+    min_samples: 64
+    require_changing: true
+    min_peak_to_peak: 32
+    expected_mclk_lrck_ratio: 64
+    max_mclk_lrck_ratio_error: 0
+    max_lrck_half_period_jitter: 0
+  data:
+    require_required_slots: true
+    require_all_file_slots_loaded: false
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true
+  save:
+    require_nonvolatile_unload: true
+  bridge:
+    require_little_endian: true
+    require_slot_table: true
+    min_host_commands: 6
+    min_target_commands: 9
+    readbacks:
+      - name: target_read_payload_count
+        address: 0x50000030
+        value: 32
+        mask: 0xffffffff
+      - name: target_read_first_word
+        address: 0x50000034
+        value: 0x18110A03
+        mask: 0xffffffff
+      - name: target_filename_struct_bytes
+        address: 0x50000038
+        value: 256
+        mask: 0xffffffff

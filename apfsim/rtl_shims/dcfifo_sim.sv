@@ -32,6 +32,8 @@ module dcfifo #(
     integer wr_ptr;
     integer rd_ptr;
     integer count;
+    reg wrclk_prev;
+    reg rdclk_prev;
 
     assign rdempty = (count == 0);
     assign wrempty = (count == 0);
@@ -46,27 +48,39 @@ module dcfifo #(
         wr_ptr = 0;
         rd_ptr = 0;
         count = 0;
+        wrclk_prev = 0;
+        rdclk_prev = 0;
     end
 
-    always @(posedge wrclk or posedge aclr) begin
+    always @(wrclk or rdclk or aclr) begin
         if (aclr) begin
-            wr_ptr <= 0;
-            count <= 0;
-        end else if (wrreq && count < DEPTH) begin
-            mem[wr_ptr] <= data;
-            wr_ptr <= (wr_ptr + 1) % DEPTH;
-            count <= count + 1;
-        end
-    end
+            wr_ptr = 0;
+            rd_ptr = 0;
+            count = 0;
+            q = '0;
+            wrclk_prev = wrclk;
+            rdclk_prev = rdclk;
+        end else begin
+            integer did_read;
+            integer did_write;
+            did_read = 0;
+            did_write = 0;
 
-    always @(posedge rdclk or posedge aclr) begin
-        if (aclr) begin
-            rd_ptr <= 0;
-            q <= '0;
-        end else if (rdreq && count > 0) begin
-            q <= mem[rd_ptr];
-            rd_ptr <= (rd_ptr + 1) % DEPTH;
-            count <= count - 1;
+            if (rdclk && !rdclk_prev && rdreq && count > 0) begin
+                q = mem[rd_ptr];
+                rd_ptr = (rd_ptr + 1) % DEPTH;
+                did_read = 1;
+            end
+
+            if (wrclk && !wrclk_prev && wrreq && ((count - did_read) < DEPTH)) begin
+                mem[wr_ptr] = data;
+                wr_ptr = (wr_ptr + 1) % DEPTH;
+                did_write = 1;
+            end
+
+            count = count + did_write - did_read;
+            wrclk_prev = wrclk;
+            rdclk_prev = rdclk;
         end
     end
 endmodule
@@ -108,6 +122,8 @@ module dcfifo_mixed_widths #(
     integer wr_ptr;
     integer rd_ptr;
     integer count;
+    reg wrclk_prev;
+    reg rdclk_prev;
 
     assign rdempty = (count == 0);
     assign wrempty = (count == 0);
@@ -122,27 +138,39 @@ module dcfifo_mixed_widths #(
         wr_ptr = 0;
         rd_ptr = 0;
         count = 0;
+        wrclk_prev = 0;
+        rdclk_prev = 0;
     end
 
-    always @(posedge wrclk or posedge aclr) begin
+    always @(wrclk or rdclk or aclr) begin
         if (aclr) begin
-            wr_ptr <= 0;
-            count <= 0;
-        end else if (wrreq && count < DEPTH) begin
-            mem[wr_ptr] <= {{(WIDTH_MAX-lpm_width){1'b0}}, data};
-            wr_ptr <= (wr_ptr + 1) % DEPTH;
-            count <= count + 1;
-        end
-    end
+            wr_ptr = 0;
+            rd_ptr = 0;
+            count = 0;
+            q = '0;
+            wrclk_prev = wrclk;
+            rdclk_prev = rdclk;
+        end else begin
+            integer did_read;
+            integer did_write;
+            did_read = 0;
+            did_write = 0;
 
-    always @(posedge rdclk or posedge aclr) begin
-        if (aclr) begin
-            rd_ptr <= 0;
-            q <= '0;
-        end else if (rdreq && count > 0) begin
-            q <= mem[rd_ptr][lpm_width_r-1:0];
-            rd_ptr <= (rd_ptr + 1) % DEPTH;
-            count <= count - 1;
+            if (rdclk && !rdclk_prev && rdreq && count > 0) begin
+                q = mem[rd_ptr][lpm_width_r-1:0];
+                rd_ptr = (rd_ptr + 1) % DEPTH;
+                did_read = 1;
+            end
+
+            if (wrclk && !wrclk_prev && wrreq && ((count - did_read) < DEPTH)) begin
+                mem[wr_ptr] = {{(WIDTH_MAX-lpm_width){1'b0}}, data};
+                wr_ptr = (wr_ptr + 1) % DEPTH;
+                did_write = 1;
+            end
+
+            count = count + did_write - did_read;
+            wrclk_prev = wrclk;
+            rdclk_prev = rdclk;
         end
     end
 endmodule

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/result.schema.json",
+  "title": "apfsim run result",
+  "type": "object",
+  "required": ["ok", "status", "artifact_dir", "failed_phase", "phases", "boot", "data", "bridge", "video", "video_shape", "audio", "input", "save", "failures"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "scenario": { "type": "string" },
+    "artifact_dir": { "type": "string" },
+    "failed_phase": { "type": "string" },
+    "message": { "type": "string" },
+    "status": { "type": "string" },
+    "cycles_74a": { "type": "integer", "minimum": 0 },
+    "phases": {
+      "type": "object",
+      "required": ["boot", "reset", "data", "video", "audio", "interact", "input", "save"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status", "ok"],
+        "properties": {
+          "status": { "enum": ["pass", "fail", "missing"] },
+          "ok": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "lifecycle": { "type": "object" },
+    "boot": { "type": "object" },
+    "data": { "type": "object" },
+    "bridge": { "type": "object" },
+    "video": { "type": "object" },
+    "video_shape": { "$ref": "video_shape.schema.json#/properties/video_shape" },
+    "audio": { "type": "object" },
+    "interact": { "type": "object" },
+    "input": { "type": "object" },
+    "save": { "type": "object" },
+    "savestate": { "type": "object" },
+    "host_commands": { "type": "array" },
+    "readbacks": { "type": "array" },
+    "failures": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

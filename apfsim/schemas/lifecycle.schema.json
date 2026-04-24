@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/lifecycle.schema.json",
+  "title": "apfsim lifecycle report",
+  "type": "object",
+  "required": ["schema", "source_result", "result_ok", "lifecycle"],
+  "properties": {
+    "schema": { "const": "apfsim.lifecycle.v1" },
+    "source_result": { "type": "string" },
+    "result_ok": { "type": "boolean" },
+    "lifecycle": {
+      "type": "object",
+      "required": ["cycles_74a", "boot_ok", "running", "cycles", "events", "durations", "counters"],
+      "properties": {
+        "cycles_74a": { "type": "integer", "minimum": 0 },
+        "boot_ok": { "type": "boolean" },
+        "running": { "type": "boolean" },
+        "cycles": {
+          "type": "object",
+          "required": ["boot_start", "status_setup", "reset_enter", "data_slot_all_complete", "target_ready_to_run", "reset_exit", "status_running"],
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "cycle"],
+            "properties": {
+              "name": { "type": "string" },
+              "cycle": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "durations": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "counters": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

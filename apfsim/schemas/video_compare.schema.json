@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/video_compare.schema.json",
+  "title": "apfsim video.json comparison",
+  "type": "object",
+  "required": ["schema", "ok", "video_json", "simulated", "modes", "matched_modes", "failures", "warnings"],
+  "properties": {
+    "schema": { "const": "apfsim.video_compare.v1" },
+    "ok": { "type": "boolean" },
+    "shape_source": { "type": "string" },
+    "video_json": { "type": "string" },
+    "simulated": { "type": "object" },
+    "modes": { "type": "array" },
+    "matched_modes": { "type": "array" },
+    "allow_swapped": { "type": "boolean" },
+    "failures": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

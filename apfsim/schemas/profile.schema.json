@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/profile.schema.json",
+  "title": "apfsim profile manifest",
+  "type": "object",
+  "required": ["top", "filelist", "scenario"],
+  "properties": {
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "kind": { "type": "string" },
+    "external": { "type": "boolean" },
+    "root": { "type": "string" },
+    "root_env": { "type": "string" },
+    "root_env_alternates": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "root_default": { "type": "string" },
+    "core_id": { "type": "string" },
+    "core_id_env": { "type": "string" },
+    "top": { "type": "string" },
+    "filelist": { "type": "string" },
+    "scenario": { "type": "string" },
+    "metadata_jsons": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "verilator_flags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "shim_catalog_file": { "type": "string" },
+    "shim_catalog": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "vars": { "type": "object" }
+            },
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "shim_catalog_expanded": { "type": "array" },
+    "frames": { "type": "integer", "minimum": 0 },
+    "timeout_cycles": { "type": "integer", "minimum": 0 },
+    "write_idle_cycles": { "type": "integer", "minimum": 0 },
+    "bridge_read_latency_cycles": { "type": "integer", "minimum": 0 },
+    "bridge_write_strobe_cycles": { "type": "integer", "minimum": 0 },
+    "bridge_endian": { "enum": ["little", "big"] },
+    "target_service_interval_cycles": { "type": "integer", "minimum": 0 },
+    "interact_verify_readback": { "type": "boolean" },
+    "build_dir": { "type": "string" },
+    "artifact_root": { "type": "string" },
+    "required_paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expected_artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "generated_files": { "type": "array" }
+  },
+  "additionalProperties": true
+}

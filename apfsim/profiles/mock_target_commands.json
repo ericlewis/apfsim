@@ -1,0 +1,36 @@
+{
+  "name": "mock_target_commands",
+  "description": "Built-in APF target-command service regression covering target data-slot read/write/read48/write48/flush, filename, open-file, and debug-event commands",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/target_command_smoke.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "verilator_flags": [
+    "-DAPFSIM_TARGET_COMMAND_SMOKE"
+  ],
+  "frames": 4,
+  "timeout_cycles": 5000000,
+  "target_service_interval_cycles": 1024,
+  "build_dir": "build/profiles/mock_target_commands/obj",
+  "artifact_root": "build/profiles/mock_target_commands/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "examples/assets/mock.rom"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "bridge_summary.json",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json",
+    "saves/slot_4.bin"
+  ]
+}

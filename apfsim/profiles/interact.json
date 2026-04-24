@@ -1,0 +1,52 @@
+{
+  "name": "interact",
+  "description": "Official open-fpga/core-example-interact APF interact/settings smoke test",
+  "external": true,
+  "root_env": "CORE_EXAMPLE_INTERACT_ROOT",
+  "top": "core_top",
+  "filelist": "examples/interact/filelist.f",
+  "scenario": "examples/interact/interact_boot.yml",
+  "metadata_jsons": {
+    "data": "{root}/data.json",
+    "video": "{root}/video.json",
+    "interact": "{root}/interact.json"
+  },
+  "frames": 4,
+  "timeout_cycles": 20000000,
+  "interact_verify_readback": false,
+  "build_dir": "build/profiles/interact/obj",
+  "artifact_root": "build/profiles/interact/run",
+  "generated_files": [
+    {
+      "type": "copy_replace",
+      "source": "{root}/src/fpga/core/core_top.v",
+      "dest": "build/generated/interact_core_top_sim.v",
+      "replacements": [
+        {
+          "from": ".datatable_q            ( datatable_q ),\n\n);",
+          "to": ".datatable_q            ( datatable_q )\n\n);"
+        }
+      ]
+    }
+  ],
+  "required_paths": [
+    "{root}/core.json",
+    "{root}/data.json",
+    "{root}/video.json",
+    "{root}/interact.json",
+    "{root}/src/fpga/core/core_top.v",
+    "{root}/src/fpga/core/core_bridge_cmd.v",
+    "{root}/src/fpga/apf/common.v",
+    "{root}/src/fpga/apf/mf_datatable.v"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

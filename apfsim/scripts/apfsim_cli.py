@@ -13,10 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from artifact_validator import ArtifactValidationError, annotate_result_phases, validate_artifacts
+from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
 from log_analyzer import analyze_logs, write_json_report
+from profile_generator import generate_profile_candidate
 
 APFSIM_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = APFSIM_DIR / "profiles"
+CATALOGS_DIR = APFSIM_DIR / "catalogs"
+DEFAULT_SHIM_CATALOG = CATALOGS_DIR / "shims.json"
 SKIP_EXIT = 77
 
 
@@ -38,6 +43,10 @@ class Profile:
     root: Path | None
 
     @property
+    def kind(self) -> str:
+        return str(self.raw.get("kind", "verilator"))
+
+    @property
     def top(self) -> str:
         return str(self.raw["top"])
 
@@ -56,6 +65,15 @@ class Profile:
     @property
     def scenario(self) -> Path:
         return resolve_path(self.raw["scenario"], self)
+
+    @property
+    def core_id(self) -> str:
+        if self.raw.get("core_id"):
+            return str(self.raw["core_id"])
+        env_name = self.raw.get("core_id_env")
+        if env_name and os.environ.get(str(env_name)):
+            return os.environ[str(env_name)]
+        return ""
 
 
 def eprint(*args: object, **kwargs: Any) -> None:
@@ -88,6 +106,9 @@ def profile_root(raw: dict[str, Any]) -> Path | None:
     env_name = raw.get("root_env")
     if env_name and os.environ.get(str(env_name)):
         return Path(os.path.expanduser(os.path.expandvars(os.environ[str(env_name)])))
+    for alt_env in raw.get("root_env_alternates", []):
+        if alt_env and os.environ.get(str(alt_env)):
+            return Path(os.path.expanduser(os.path.expandvars(os.environ[str(alt_env)])))
     if "root_default" in raw:
         return Path(os.path.expanduser(os.path.expandvars(str(raw["root_default"]))))
     return None
@@ -97,18 +118,197 @@ def load_profile(name_or_path: str) -> Profile:
     path = profile_path(name_or_path)
     raw = load_json(path)
     name = str(raw.get("name") or path.stem)
+    raw = expand_profile_shim_catalog(raw, name)
     return Profile(name=name, path=path, raw=raw, root=profile_root(raw))
 
 
 def resolve_path(value: str | os.PathLike[str], profile: Profile | None = None) -> Path:
     text = str(value)
     root = profile.root if profile and profile.root else APFSIM_DIR
-    text = text.replace("{apfsim}", str(APFSIM_DIR)).replace("{root}", str(root))
+    profile_name = profile.name if profile else ""
+    core_id = profile.core_id if profile else ""
+    profile_dir = profile.path.parent if profile else APFSIM_DIR
+    text = (
+        text.replace("{apfsim}", str(APFSIM_DIR))
+        .replace("{root}", str(root))
+        .replace("{profile}", profile_name)
+        .replace("{profile_dir}", str(profile_dir))
+        .replace("{core_id}", core_id)
+    )
     text = os.path.expanduser(os.path.expandvars(text))
     path = Path(text)
     if path.is_absolute():
         return path
     return (APFSIM_DIR / path).resolve()
+
+
+def expand_profile_text(text: str, profile: Profile) -> str:
+    root = profile.root if profile.root else APFSIM_DIR
+    return os.path.expanduser(
+        os.path.expandvars(
+            text.replace("{apfsim}", str(APFSIM_DIR))
+            .replace("{root}", str(root))
+            .replace("{profile}", profile.name)
+            .replace("{profile_dir}", str(profile.path.parent))
+            .replace("{core_id}", profile.core_id)
+        )
+    )
+
+
+def materialize_profile_text_file(profile: Profile, source: Path, kind: str) -> Path:
+    text = source.read_text()
+    expanded = expand_profile_text(text, profile)
+    if expanded == text:
+        return source
+    dest = profile.build_dir / f"{kind}.resolved{source.suffix or '.txt'}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(expanded)
+    return dest
+
+
+def build_filelist_path(profile: Profile) -> Path:
+    return materialize_profile_text_file(profile, profile.filelist, "filelist")
+
+
+def runtime_scenario_path(profile: Profile, scenario: Path) -> Path:
+    return materialize_profile_text_file(profile, scenario, "scenario")
+
+
+def load_shim_catalog(path: Path = DEFAULT_SHIM_CATALOG) -> dict[str, dict[str, Any]]:
+    data = load_json(path)
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        raise ApfSimError(f"shim catalog must contain an entries list: {path}", phase="preflight")
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            raise ApfSimError(f"shim catalog entry missing name: {path}", phase="preflight")
+        out[str(entry["name"])] = entry
+    return out
+
+
+def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[str, Any]:
+    specs = raw.get("shim_catalog", [])
+    if not specs:
+        return raw
+    if not isinstance(specs, list):
+        raise ApfSimError("profile shim_catalog must be a list", phase="preflight")
+    catalog_path = resolve_catalog_path(raw.get("shim_catalog_file", str(DEFAULT_SHIM_CATALOG)), raw, profile_name)
+    catalog = load_shim_catalog(catalog_path)
+    expanded = dict(raw)
+    generated_files = list(expanded.get("generated_files", []))
+    required_paths = list(expanded.get("required_paths", []))
+    verilator_flags = list(expanded.get("verilator_flags", []))
+    expected_artifacts = list(expanded.get("expected_artifacts", []))
+    catalog_expanded: list[dict[str, Any]] = []
+
+    for spec in specs:
+        if isinstance(spec, str):
+            name = spec
+            variables: dict[str, Any] = {}
+        elif isinstance(spec, dict):
+            name = str(spec.get("name", ""))
+            variables = dict(spec.get("vars", {}))
+        else:
+            raise ApfSimError("shim_catalog entries must be names or objects", phase="preflight")
+        if not name or name not in catalog:
+            raise ApfSimError(f"unknown shim catalog entry: {name}", phase="preflight")
+        entry = catalog[name]
+        catalog_source = select_catalog_source(entry, expanded, profile_name, variables)
+        context = {"catalog_source": catalog_source, **{str(k): str(v) for k, v in variables.items()}}
+
+        for item in entry.get("generated_files", []):
+            if not isinstance(item, dict):
+                continue
+            generated = expand_catalog_value(item, expanded, profile_name, context)
+            if isinstance(generated, dict):
+                generated["catalog_entry"] = name
+                generated_files.append(generated)
+        for value in entry.get("required_paths", []):
+            required_paths.append(str(expand_catalog_value(value, expanded, profile_name, context)))
+        for value in entry.get("verilator_flags", []):
+            verilator_flags.append(str(expand_catalog_value(value, expanded, profile_name, context)))
+        for value in entry.get("expected_artifacts", []):
+            expected_artifacts.append(str(expand_catalog_value(value, expanded, profile_name, context)))
+        catalog_expanded.append({
+            "name": name,
+            "description": entry.get("description", ""),
+            "catalog_source": catalog_source,
+            "generated_files": len(entry.get("generated_files", [])),
+        })
+
+    expanded["generated_files"] = dedupe_generated_files(generated_files)
+    expanded["required_paths"] = dedupe_strings(required_paths)
+    expanded["verilator_flags"] = dedupe_strings(verilator_flags)
+    expanded["expected_artifacts"] = dedupe_strings(expected_artifacts)
+    expanded["shim_catalog_expanded"] = catalog_expanded
+    return expanded
+
+
+def resolve_catalog_path(value: str, raw: dict[str, Any], profile_name: str) -> Path:
+    text = expand_catalog_string(str(value), raw, profile_name, {})
+    path = Path(os.path.expanduser(os.path.expandvars(text)))
+    if path.is_absolute():
+        return path
+    return (APFSIM_DIR / path).resolve()
+
+
+def select_catalog_source(entry: dict[str, Any], raw: dict[str, Any], profile_name: str, variables: dict[str, Any]) -> str:
+    candidates = entry.get("source_candidates", [])
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+    first = ""
+    context = {str(k): str(v) for k, v in variables.items()}
+    for candidate in candidates:
+        expanded = expand_catalog_string(str(candidate), raw, profile_name, context)
+        path = Path(os.path.expanduser(os.path.expandvars(expanded)))
+        if not path.is_absolute():
+            path = APFSIM_DIR / path
+        if not first:
+            first = str(path)
+        if path.exists():
+            return str(path)
+    return first
+
+
+def expand_catalog_value(value: Any, raw: dict[str, Any], profile_name: str, context: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return expand_catalog_string(value, raw, profile_name, context)
+    if isinstance(value, list):
+        return [expand_catalog_value(item, raw, profile_name, context) for item in value]
+    if isinstance(value, dict):
+        return {key: expand_catalog_value(item, raw, profile_name, context) for key, item in value.items()}
+    return value
+
+
+def expand_catalog_string(value: str, raw: dict[str, Any], profile_name: str, context: dict[str, str]) -> str:
+    root = profile_root(raw) or APFSIM_DIR
+    text = value.replace("{apfsim}", str(APFSIM_DIR)).replace("{root}", str(root)).replace("{profile}", profile_name)
+    for key, item in context.items():
+        text = text.replace("{" + key + "}", item)
+    return os.path.expanduser(os.path.expandvars(text))
+
+
+def dedupe_strings(values: list[Any]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        text = str(value)
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def dedupe_generated_files(values: list[Any]) -> list[Any]:
+    out: list[Any] = []
+    seen: set[tuple[str, str, str]] = set()
+    for value in values:
+        if isinstance(value, dict):
+            key = (str(value.get("type", "")), str(value.get("source", "")), str(value.get("dest", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(value)
+    return out
 
 
 def require_keys(profile: Profile, keys: list[str]) -> None:
@@ -117,7 +317,7 @@ def require_keys(profile: Profile, keys: list[str]) -> None:
         raise ApfSimError(f"profile {profile.name} missing required key(s): {', '.join(missing)}")
 
 
-def parse_scenario_files(path: Path) -> list[Path]:
+def parse_scenario_files(path: Path, profile: Profile | None = None) -> list[Path]:
     files: list[Path] = []
     if not path.exists():
         return files
@@ -138,16 +338,22 @@ def parse_scenario_files(path: Path) -> list[Path]:
             if in_slot and stripped.startswith("file:"):
                 value = stripped.split(":", 1)[1].strip().strip("'\"")
                 if value:
+                    if profile is not None:
+                        value = expand_profile_text(value, profile)
                     candidate = Path(os.path.expanduser(os.path.expandvars(value)))
                     files.append(candidate if candidate.is_absolute() else (APFSIM_DIR / candidate).resolve())
     return files
 
 
 def preflight(profile: Profile, check_assets: bool = True) -> None:
+    if profile.kind != "verilator":
+        raise ApfSimError(f"profile {profile.name} has unsupported kind: {profile.kind}")
     require_keys(profile, ["top", "filelist", "scenario"])
     if profile.raw.get("external") and (profile.root is None or not profile.root.exists()):
         root_text = str(profile.root) if profile.root else "<unset>"
         raise ProfileSkipped(f"profile {profile.name} skipped: external root missing: {root_text}")
+    if profile.raw.get("external") and profile.raw.get("core_id_env") and not profile.core_id:
+        raise ProfileSkipped(f"profile {profile.name} skipped: core id env missing: {profile.raw['core_id_env']}")
 
     paths: list[tuple[str, Path]] = [
         ("filelist", profile.filelist),
@@ -164,30 +370,53 @@ def preflight(profile: Profile, check_assets: bool = True) -> None:
 
     missing = [f"{label}: {path}" for label, path in paths if not path.exists()]
     if check_assets:
-        for asset in parse_scenario_files(profile.scenario):
+        for asset in parse_scenario_files(profile.scenario, profile):
             if not asset.exists():
                 missing.append(f"scenario data slot file: {asset}")
     if missing:
         raise ApfSimError("preflight failed; missing path(s):\n" + "\n".join(f"  - {m}" for m in missing))
 
-
 def generate_files(profile: Profile) -> None:
     for item in profile.raw.get("generated_files", []):
         kind = item.get("type")
-        if kind != "rename_module":
-            raise ApfSimError(f"unsupported generated_files type for {profile.name}: {kind}")
         source = resolve_path(item["source"], profile)
         dest = resolve_path(item["dest"], profile)
         original = source.read_text()
-        needle = str(item.get("from", "module core_top"))
-        replacement = str(item.get("to", "module core_top_impl"))
-        if needle not in original:
-            raise ApfSimError(f"cannot generate {dest}: source does not contain {needle!r}")
+        if kind == "rename_module":
+            needle = str(item.get("from", "module core_top"))
+            replacement = str(item.get("to", "module core_top_impl"))
+            replacements = [(needle, replacement)]
+        elif kind in {"text_replace", "copy_replace"}:
+            replacements = [(str(rep["from"]), str(rep["to"])) for rep in item.get("replacements", [])]
+            if not replacements:
+                raise ApfSimError(f"cannot generate {dest}: no replacements configured")
+        else:
+            raise ApfSimError(f"unsupported generated_files type for {profile.name}: {kind}")
+        generated = original
+        for needle, replacement in replacements:
+            if needle not in generated:
+                raise ApfSimError(f"cannot generate {dest}: source does not contain {needle!r}")
+            generated = generated.replace(needle, replacement, 1)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(original.replace(needle, replacement, 1))
+        dest.write_text(generated)
 
 
-def verilator_base_args(profile: Profile, waves: bool = False) -> list[str]:
+def sdl2_flags() -> tuple[str, str]:
+    sdl2_config = shutil.which("sdl2-config")
+    if not sdl2_config:
+        raise ApfSimError("SDL2 is required for apfsim play; install sdl2 so sdl2-config is on PATH", phase="preflight")
+    cflags = subprocess.check_output([sdl2_config, "--cflags"], text=True).strip()
+    libs = subprocess.check_output([sdl2_config, "--libs"], text=True).strip()
+    return cflags, libs
+
+
+def verilator_base_args(profile: Profile, waves: bool = False, sdl: bool = False) -> list[str]:
+    cflags = "-std=c++20 -O2 -Icpp"
+    ldflags: str | None = None
+    if sdl:
+        sdl_cflags, sdl_libs = sdl2_flags()
+        cflags = f"{cflags} -DAPFSIM_ENABLE_SDL=1 {sdl_cflags}"
+        ldflags = sdl_libs
     args = [
         os.environ.get("VERILATOR", "verilator"),
         "--cc",
@@ -198,13 +427,15 @@ def verilator_base_args(profile: Profile, waves: bool = False) -> list[str]:
         "--Mdir",
         str(profile.build_dir),
         "-f",
-        str(profile.filelist),
+        str(build_filelist_path(profile)),
         "-Irtl_shims",
         "-Wno-fatal",
         "--assert",
         "-CFLAGS",
-        "-std=c++20 -O2 -Icpp",
+        cflags,
     ]
+    if ldflags:
+        args.extend(["-LDFLAGS", ldflags])
     args.extend(str(flag) for flag in profile.raw.get("verilator_flags", []))
     if waves:
         args.extend(["--trace", "--trace-fst", "--trace-structs"])
@@ -212,8 +443,14 @@ def verilator_base_args(profile: Profile, waves: bool = False) -> list[str]:
     return args
 
 
-def run_command(args: list[str], *, env: dict[str, str] | None = None, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, cwd=APFSIM_DIR, env=env, text=True, capture_output=True, timeout=timeout)
+def run_command(
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd or APFSIM_DIR, env=env, text=True, capture_output=True, timeout=timeout)
 
 
 def print_completed(proc: subprocess.CompletedProcess[str]) -> None:
@@ -223,11 +460,11 @@ def print_completed(proc: subprocess.CompletedProcess[str]) -> None:
         eprint(proc.stderr, end="")
 
 
-def build_profile(profile: Profile, waves: bool = False) -> int:
+def build_profile(profile: Profile, waves: bool = False, sdl: bool = False) -> int:
     preflight(profile)
     generate_files(profile)
     profile.build_dir.mkdir(parents=True, exist_ok=True)
-    proc = run_command(verilator_base_args(profile, waves=waves), timeout=600)
+    proc = run_command(verilator_base_args(profile, waves=waves, sdl=sdl), timeout=600)
     print_completed(proc)
     return proc.returncode
 
@@ -244,12 +481,14 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
     (artifact_root / "video").mkdir(parents=True, exist_ok=True)
     (artifact_root / "audio").mkdir(parents=True, exist_ok=True)
     (artifact_root / "saves").mkdir(parents=True, exist_ok=True)
+    (artifact_root / "savestates").mkdir(parents=True, exist_ok=True)
 
     binary = profile.build_dir / f"V{profile.top}"
     if not binary.exists():
         raise ApfSimError(f"built simulator not found: {binary}", phase="build")
 
     scenario = resolve_path(args.scenario, profile) if args.scenario else profile.scenario
+    scenario = runtime_scenario_path(profile, scenario)
     frames = args.frames if args.frames is not None else int(profile.raw.get("frames", 0) or 0)
     timeout_cycles = args.timeout_cycles if args.timeout_cycles is not None else int(profile.raw.get("timeout_cycles", 0) or 0)
     cmd = [
@@ -259,8 +498,11 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
         "--dump-audio", str(artifact_root / "audio" / "out.wav"),
         "--audio-stats", str(artifact_root / "audio" / "stats.json"),
         "--dump-saves", str(artifact_root / "saves"),
+        "--dump-savestates", str(artifact_root / "savestates"),
         "--result-json", str(artifact_root / "result.json"),
         "--bridge-log", str(artifact_root / "bridge.log"),
+        "--bridge-summary", str(artifact_root / "bridge_summary.json"),
+        "--video-shape-json", str(artifact_root / "video_shape.json"),
     ]
     for key, value in dict(profile.raw.get("metadata_jsons", {})).items():
         if value:
@@ -272,6 +514,24 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
     write_idle = args.write_idle_cycles if args.write_idle_cycles is not None else profile.raw.get("write_idle_cycles")
     if write_idle is not None:
         cmd.extend(["--write-idle-cycles", str(write_idle)])
+    read_latency = args.bridge_read_latency_cycles if args.bridge_read_latency_cycles is not None else profile.raw.get("bridge_read_latency_cycles")
+    if read_latency is not None:
+        cmd.extend(["--bridge-read-latency-cycles", str(read_latency)])
+    write_strobe = args.bridge_write_strobe_cycles if args.bridge_write_strobe_cycles is not None else profile.raw.get("bridge_write_strobe_cycles")
+    if write_strobe is not None:
+        cmd.extend(["--bridge-write-strobe-cycles", str(write_strobe)])
+    bridge_endian = args.bridge_endian or profile.raw.get("bridge_endian")
+    if bridge_endian:
+        cmd.extend(["--bridge-endian", str(bridge_endian)])
+    target_service_interval = args.target_service_interval_cycles
+    if target_service_interval is None:
+        target_service_interval = profile.raw.get("target_service_interval_cycles")
+    if target_service_interval is not None:
+        cmd.extend(["--target-service-interval-cycles", str(target_service_interval)])
+    if args.interact_no_verify or profile.raw.get("interact_verify_readback") is False:
+        cmd.append("--interact-no-verify")
+    if args.bridge_trace or profile.raw.get("bridge_trace"):
+        cmd.extend(["--bridge-trace", str(artifact_root / "bridge_transactions.jsonl")])
     for slot in args.slot or []:
         cmd.extend(["--slot", slot])
     if args.verbose_bridge:
@@ -281,13 +541,115 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
     if args.waves:
         env["APFSIM_WAVES"] = "1"
         env.setdefault("APFSIM_WAVE_PATH", str(artifact_root / "dump.fst"))
-    proc = run_command(cmd, env=env, timeout=args.timeout)
+    runtime_cwd = resolve_path(profile.raw["runtime_cwd"], profile) if profile.raw.get("runtime_cwd") else APFSIM_DIR
+    proc = run_command(cmd, env=env, timeout=args.timeout, cwd=runtime_cwd)
     print_completed(proc)
     if proc.returncode != 0:
+        annotate_result_phases(artifact_root)
         print_failure_hint(artifact_root)
     else:
+        validate_runtime_artifacts(profile, artifact_root)
         validate_expected_artifacts(profile, artifact_root)
     return proc.returncode
+
+def cmd_play(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    preflight(profile)
+    if profile.kind != "verilator":
+        raise ApfSimError(f"play requires a verilator profile, got {profile.kind}")
+    if not args.no_build:
+        rc = build_profile(profile, waves=args.waves, sdl=True)
+        if rc != 0:
+            return rc
+
+    artifact_root = resolve_path(args.artifacts, profile) if args.artifacts else APFSIM_DIR / "output" / f"{profile.name}-play"
+    if args.clean_artifacts and artifact_root.exists():
+        shutil.rmtree(artifact_root)
+    (artifact_root / "audio").mkdir(parents=True, exist_ok=True)
+    (artifact_root / "saves").mkdir(parents=True, exist_ok=True)
+    (artifact_root / "savestates").mkdir(parents=True, exist_ok=True)
+
+    binary = profile.build_dir / f"V{profile.top}"
+    if not binary.exists():
+        raise ApfSimError(f"built simulator not found: {binary}", phase="build")
+
+    scenario = resolve_path(args.scenario, profile) if args.scenario else profile.scenario
+    scenario = runtime_scenario_path(profile, scenario)
+    timeout_cycles = args.timeout_cycles if args.timeout_cycles is not None else int(profile.raw.get("timeout_cycles", 0) or 0)
+    cmd = [
+        str(binary),
+        "--interactive",
+        "--scenario", str(scenario),
+        "--dump-audio", str(artifact_root / "audio" / "out.wav"),
+        "--audio-stats", str(artifact_root / "audio" / "stats.json"),
+        "--dump-saves", str(artifact_root / "saves"),
+        "--dump-savestates", str(artifact_root / "savestates"),
+        "--result-json", str(artifact_root / "result.json"),
+        "--bridge-log", str(artifact_root / "bridge.log"),
+        "--bridge-summary", str(artifact_root / "bridge_summary.json"),
+        "--video-shape-json", str(artifact_root / "video_shape.json"),
+        "--play-scale", str(args.scale),
+        "--play-speed-percent", str(args.speed_percent),
+    ]
+    for key, value in dict(profile.raw.get("metadata_jsons", {})).items():
+        if value:
+            cmd.extend([f"--{key}", str(resolve_path(value, profile))])
+    if timeout_cycles:
+        cmd.extend(["--timeout-cycles", str(timeout_cycles)])
+    write_idle = args.write_idle_cycles if args.write_idle_cycles is not None else profile.raw.get("write_idle_cycles")
+    if write_idle is not None:
+        cmd.extend(["--write-idle-cycles", str(write_idle)])
+    read_latency = args.bridge_read_latency_cycles if args.bridge_read_latency_cycles is not None else profile.raw.get("bridge_read_latency_cycles")
+    if read_latency is not None:
+        cmd.extend(["--bridge-read-latency-cycles", str(read_latency)])
+    write_strobe = args.bridge_write_strobe_cycles if args.bridge_write_strobe_cycles is not None else profile.raw.get("bridge_write_strobe_cycles")
+    if write_strobe is not None:
+        cmd.extend(["--bridge-write-strobe-cycles", str(write_strobe)])
+    bridge_endian = args.bridge_endian or profile.raw.get("bridge_endian")
+    if bridge_endian:
+        cmd.extend(["--bridge-endian", str(bridge_endian)])
+    target_service_interval = args.target_service_interval_cycles
+    if target_service_interval is None:
+        target_service_interval = profile.raw.get("target_service_interval_cycles")
+    if target_service_interval is not None:
+        cmd.extend(["--target-service-interval-cycles", str(target_service_interval)])
+    if args.interact_no_verify or profile.raw.get("interact_verify_readback") is False:
+        cmd.append("--interact-no-verify")
+    if args.bridge_trace or profile.raw.get("bridge_trace"):
+        cmd.extend(["--bridge-trace", str(artifact_root / "bridge_transactions.jsonl")])
+    for slot in args.slot or []:
+        cmd.extend(["--slot", slot])
+    if args.verbose_bridge:
+        cmd.append("--verbose-bridge")
+
+    env = os.environ.copy()
+    if args.waves:
+        env["APFSIM_WAVES"] = "1"
+        env.setdefault("APFSIM_WAVE_PATH", str(artifact_root / "dump.fst"))
+    runtime_cwd = resolve_path(profile.raw["runtime_cwd"], profile) if profile.raw.get("runtime_cwd") else APFSIM_DIR
+    timeout = args.timeout if args.timeout and args.timeout > 0 else None
+    try:
+        proc = subprocess.run(cmd, cwd=runtime_cwd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print_failure_hint(artifact_root)
+        eprint(f"apfsim play timed out after {timeout}s")
+        return 124
+    if proc.returncode != 0:
+        annotate_result_phases(artifact_root)
+        print_failure_hint(artifact_root)
+    else:
+        validate_runtime_artifacts(profile, artifact_root)
+        print(f"apfsim play artifacts: {artifact_root}")
+    return proc.returncode
+
+
+def validate_runtime_artifacts(profile: Profile, artifact_root: Path) -> None:
+    video_metadata = dict(profile.raw.get("metadata_jsons", {})).get("video")
+    video_metadata_path = resolve_path(video_metadata, profile) if video_metadata else None
+    try:
+        validate_artifacts(artifact_root, video_metadata_path=video_metadata_path, update_result=True)
+    except ArtifactValidationError as exc:
+        raise ApfSimError(str(exc), phase="artifact") from exc
 
 
 def validate_expected_artifacts(profile: Profile, artifact_root: Path) -> None:
@@ -298,6 +660,23 @@ def validate_expected_artifacts(profile: Profile, artifact_root: Path) -> None:
             missing.append(str(path))
     if missing:
         raise ApfSimError("expected artifact(s) missing:\n" + "\n".join(f"  - {p}" for p in missing), phase="artifact")
+
+
+def cmd_validate_artifacts(args: argparse.Namespace) -> int:
+    artifact_root = resolve_user_path(args.artifact_dir)
+    video_metadata_path = resolve_user_path(args.video_json) if args.video_json else None
+    try:
+        result = validate_artifacts(artifact_root, video_metadata_path=video_metadata_path, update_result=not args.no_update)
+    except ArtifactValidationError as exc:
+        raise ApfSimError(str(exc), phase="artifact") from exc
+    print(
+        "PASS artifacts: "
+        f"ok={bool(result.get('ok'))} "
+        f"video={result.get('video', {}).get('active_width', '?')}x{result.get('video', {}).get('active_height', '?')} "
+        f"frames={result.get('video', {}).get('frames_completed', '?')} "
+        f"audio_samples={result.get('audio', {}).get('samples', '?')}"
+    )
+    return 0
 
 
 def print_failure_hint(artifact_root: Path) -> None:
@@ -340,16 +719,18 @@ def cmd_build(args: argparse.Namespace) -> int:
         preflight(profile)
         print(f"PASS preflight: {profile.name}")
         return 0
-    return build_profile(profile, waves=args.waves)
+    return build_profile(profile, waves=args.waves, sdl=args.sdl)
 
 
 def matrix_profiles(name: str) -> list[str]:
     if name == "ci":
-        return ["mock_port_gate"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle"]
     if name == "local-fast":
-        return ["mock_port_gate", "core_template"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template"]
     if name == "local-real":
-        return ["mock_port_gate", "core_template", "basicassets", "pacman", "mrjong"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
+    if name == "official-examples":
+        return ["core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
     raise ApfSimError(f"unknown matrix: {name}")
 
 
@@ -385,6 +766,469 @@ def cmd_test(args: argparse.Namespace) -> int:
 def resolve_user_path(value: str) -> Path:
     path = Path(os.path.expanduser(os.path.expandvars(value)))
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
+
+
+VIDEO_SHAPE_FIELDS = [
+    "active_width",
+    "active_height",
+    "active_width_min",
+    "active_width_max",
+    "active_height_min",
+    "active_height_max",
+    "total_width_min",
+    "total_width_max",
+    "pixels_per_line_min",
+    "pixels_per_line_max",
+    "hs_after_vs_gap_min",
+    "hs_to_de_gap_min",
+    "de_to_hs_gap_min",
+    "vs_to_first_de_lines",
+    "vs_to_first_de_lines_min",
+    "vs_to_first_de_lines_max",
+    "hs_pulses_min",
+    "hs_pulses_max",
+    "de_errors",
+    "rgb_when_de_low_errors",
+    "pulse_width_errors",
+    "skip_errors",
+    "errors",
+    "stable_dimensions",
+    "protocol_valid",
+    "frames_measured",
+    "frames_completed",
+    "ignored_startup_frames",
+    "source_signals",
+]
+
+
+def result_json_path(path: Path) -> Path:
+    if path.is_dir():
+        return path / "result.json"
+    return path
+
+
+def video_shape_json_path(path: Path) -> Path:
+    if path.is_dir() and (path / "video_shape.json").exists():
+        return path / "video_shape.json"
+    return path
+
+
+def _coerce_video_shape_from_legacy_video(video: dict[str, Any]) -> dict[str, Any]:
+    width_min = video.get("active_width_frame_min", video.get("active_width"))
+    width_max = video.get("active_width_frame_max", video.get("active_width"))
+    height_min = video.get("active_height_frame_min", video.get("active_height"))
+    height_max = video.get("active_height_frame_max", video.get("active_height"))
+    errors = int(video.get("errors") or 0)
+    return {
+        "active_width": video.get("active_width"),
+        "active_height": video.get("active_height"),
+        "active_width_min": width_min,
+        "active_width_max": width_max,
+        "active_height_min": height_min,
+        "active_height_max": height_max,
+        "total_width_min": video.get("total_width_min", video.get("pixels_per_line_min")),
+        "total_width_max": video.get("total_width_max", video.get("pixels_per_line_max")),
+        "pixels_per_line_min": video.get("pixels_per_line_min"),
+        "pixels_per_line_max": video.get("pixels_per_line_max"),
+        "hs_after_vs_gap_min": video.get("hs_after_vs_gap_min"),
+        "hs_to_de_gap_min": video.get("hs_to_de_gap_min"),
+        "de_to_hs_gap_min": video.get("de_to_hs_gap_min"),
+        "vs_to_first_de_lines": video.get("vs_to_first_de_lines", 0),
+        "de_errors": video.get("de_errors", 0),
+        "rgb_when_de_low_errors": video.get("rgb_when_de_low_errors", 0),
+        "pulse_width_errors": video.get("pulse_width_errors", 0),
+        "skip_errors": video.get("skip_errors", 0),
+        "errors": errors,
+        "stable_dimensions": width_min == width_max and height_min == height_max and int(video.get("unstable_dimension_frames") or 0) == 0,
+        "protocol_valid": errors == 0,
+        "frames_measured": video.get("validated_frames", video.get("frames_completed")),
+        "frames_completed": video.get("frames_completed"),
+        "ignored_startup_frames": video.get("ignored_startup_frames", 0),
+        "source_signals": ["video_rgb", "video_de", "video_hs", "video_vs", "video_skip"],
+    }
+
+
+def extract_video_shape(result: dict[str, Any], source: Path) -> dict[str, Any]:
+    if isinstance(result.get("video_shape"), dict):
+        shape = {field: result["video_shape"].get(field) for field in VIDEO_SHAPE_FIELDS if field in result["video_shape"]}
+    else:
+        video = result.get("video")
+        if not isinstance(video, dict):
+            raise ApfSimError(f"result has no video object: {source}", phase="video-shape")
+        missing = [field for field in ("active_width", "active_height") if field not in video]
+        if missing:
+            raise ApfSimError(f"result video object missing required field(s): {', '.join(missing)}", phase="video-shape")
+        shape = _coerce_video_shape_from_legacy_video(video)
+
+    phases = result.get("phases") if isinstance(result.get("phases"), dict) else {}
+    video_phase = phases.get("video") if isinstance(phases.get("video"), dict) else {}
+    return {
+        "schema": str(result.get("schema") or "apfsim.video_shape.v1"),
+        "source_result": str(result.get("source_result") or source),
+        "result_ok": bool(result.get("result_ok", result.get("ok", False))),
+        "status": result.get("status", ""),
+        "video_phase_status": video_phase.get("status", ""),
+        "video_shape": shape,
+    }
+
+
+def extract_video_shape_from_path(path: Path) -> dict[str, Any]:
+    source = video_shape_json_path(path)
+    if source.is_dir() or source.name != "video_shape.json":
+        source = result_json_path(path)
+    try:
+        result = load_json(source)
+    except ApfSimError as exc:
+        raise ApfSimError(str(exc), phase="video-shape") from exc
+    return extract_video_shape(result, source)
+
+
+def write_shape_output(shape: dict[str, Any], json_out: str | None, pretty: bool) -> None:
+    text = json.dumps(shape, indent=2 if pretty else None, sort_keys=True) + "\n"
+    if json_out:
+        path = resolve_user_path(json_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    else:
+        print(text, end="")
+
+
+def cmd_video_shape(args: argparse.Namespace) -> int:
+    rc = 0
+    if args.profile:
+        profile = load_profile(args.profile)
+        if args.artifacts is None:
+            args.artifacts = str(APFSIM_DIR / "output" / "video-shape" / profile.name)
+        rc = run_profile(args, profile)
+        artifact_root = resolve_path(args.artifacts, profile)
+        shape = extract_video_shape_from_path(artifact_root)
+        write_shape_output(shape, args.json_out, args.pretty)
+        return rc
+
+    if not args.result:
+        raise ApfSimError("video-shape requires either a result/artifact path or --profile", phase="video-shape")
+    shape = extract_video_shape_from_path(resolve_user_path(args.result))
+    write_shape_output(shape, args.json_out, args.pretty)
+    return 0
+
+
+def extract_video_modes(data: Any) -> list[dict[str, Any]]:
+    modes: list[dict[str, Any]] = []
+    if isinstance(data, dict):
+        if isinstance(data.get("scaler_modes"), list):
+            for idx, mode in enumerate(data["scaler_modes"]):
+                if not isinstance(mode, dict):
+                    continue
+                width = parse_optional_int(mode.get("width", mode.get("expected_width")))
+                height = parse_optional_int(mode.get("height", mode.get("expected_height")))
+                if width and height:
+                    modes.append({
+                        "index": idx,
+                        "width": width,
+                        "height": height,
+                        "rotation": parse_optional_int(mode.get("rotation")),
+                        "aspect_w": parse_optional_int(mode.get("aspect_w")),
+                        "aspect_h": parse_optional_int(mode.get("aspect_h")),
+                    })
+        width = parse_optional_int(data.get("expected_width", data.get("width")))
+        height = parse_optional_int(data.get("expected_height", data.get("height")))
+        if width and height:
+            candidate = {"index": len(modes), "width": width, "height": height}
+            if not any(mode.get("width") == width and mode.get("height") == height for mode in modes):
+                modes.append(candidate)
+        for value in data.values():
+            modes.extend(extract_video_modes(value))
+    elif isinstance(data, list):
+        for value in data:
+            modes.extend(extract_video_modes(value))
+    return dedupe_modes(modes)
+
+
+def dedupe_modes(modes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, Any]] = set()
+    for mode in modes:
+        key = (int(mode["width"]), int(mode["height"]), mode.get("rotation"))
+        if key in seen:
+            continue
+        seen.add(key)
+        mode = dict(mode)
+        mode["index"] = len(out)
+        out.append(mode)
+    return out
+
+
+def parse_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    return None
+
+
+def compare_video_shape_to_json(shape_doc: dict[str, Any], video_json_path: Path, *, allow_swapped: bool = False) -> dict[str, Any]:
+    video_json = load_json(video_json_path)
+    modes = extract_video_modes(video_json)
+    shape = shape_doc.get("video_shape") if isinstance(shape_doc.get("video_shape"), dict) else {}
+    width = parse_optional_int(shape.get("active_width"))
+    height = parse_optional_int(shape.get("active_height"))
+    failures: list[str] = []
+    warnings: list[str] = []
+    if width is None or height is None:
+        failures.append("video_shape missing active_width/active_height")
+    if not modes:
+        failures.append(f"no video dimensions found in {video_json_path}")
+
+    exact_matches = []
+    swapped_matches = []
+    if width is not None and height is not None:
+        exact_matches = [mode for mode in modes if mode.get("width") == width and mode.get("height") == height]
+        swapped_matches = [mode for mode in modes if mode.get("width") == height and mode.get("height") == width]
+        if not exact_matches:
+            if allow_swapped and swapped_matches:
+                warnings.append(f"video_json only matches when dimensions are swapped: simulated {width}x{height}")
+            else:
+                expected = ", ".join(f"{mode['width']}x{mode['height']}" for mode in modes)
+                failures.append(f"video_json dimensions [{expected}] do not include simulated shape {width}x{height}")
+
+    if shape.get("stable_dimensions") is not True:
+        failures.append("video_shape.stable_dimensions is not true")
+    for key in ("de_errors", "pulse_width_errors", "skip_errors"):
+        value = parse_optional_int(shape.get(key))
+        if value is None:
+            failures.append(f"video_shape missing {key}")
+        elif value != 0:
+            failures.append(f"video_shape.{key} is {value}")
+    if parse_optional_int(shape.get("errors")) not in (None, 0):
+        failures.append(f"video_shape.errors is {shape.get('errors')}")
+    if shape.get("protocol_valid") is False:
+        failures.append("video_shape.protocol_valid is false")
+
+    return {
+        "schema": "apfsim.video_compare.v1",
+        "ok": not failures,
+        "shape_source": shape_doc.get("source_result", ""),
+        "video_json": str(video_json_path),
+        "simulated": {
+            "active_width": width,
+            "active_height": height,
+            "stable_dimensions": shape.get("stable_dimensions"),
+            "protocol_valid": shape.get("protocol_valid"),
+            "de_errors": shape.get("de_errors"),
+            "pulse_width_errors": shape.get("pulse_width_errors"),
+            "skip_errors": shape.get("skip_errors"),
+        },
+        "modes": modes,
+        "matched_modes": exact_matches or (swapped_matches if allow_swapped else []),
+        "allow_swapped": allow_swapped,
+        "failures": failures,
+        "warnings": warnings,
+    }
+
+
+def cmd_compare_video_json(args: argparse.Namespace) -> int:
+    shape_doc = extract_video_shape_from_path(resolve_user_path(args.shape))
+    report = compare_video_shape_to_json(shape_doc, resolve_user_path(args.video_json), allow_swapped=args.allow_swapped)
+    text = json.dumps(report, indent=2 if args.pretty else None, sort_keys=True) + "\n"
+    if args.json_out:
+        path = resolve_user_path(args.json_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    else:
+        print(text, end="")
+    if report["ok"]:
+        if args.json_out:
+            print("PASS video-json: simulated shape matches metadata")
+        return 0
+    for failure in report["failures"]:
+        eprint(f"FAIL video-json: {failure}")
+    return 1
+
+
+def apply_video_shape_to_json(
+    video_json: dict[str, Any],
+    shape_doc: dict[str, Any],
+    *,
+    mode_index: int | None = None,
+    timing_hints: bool = False,
+    force: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    shape = shape_doc.get("video_shape") if isinstance(shape_doc.get("video_shape"), dict) else {}
+    width = parse_optional_int(shape.get("active_width"))
+    height = parse_optional_int(shape.get("active_height"))
+    failures: list[str] = []
+    warnings: list[str] = []
+    patches: list[dict[str, Any]] = []
+
+    if width is None or height is None or width <= 0 or height <= 0:
+        failures.append("video_shape missing positive active_width/active_height")
+    if not force:
+        if shape.get("stable_dimensions") is not True:
+            failures.append("video_shape.stable_dimensions is not true")
+        for key in ("de_errors", "pulse_width_errors", "skip_errors"):
+            value = parse_optional_int(shape.get(key))
+            if value not in (0, None):
+                failures.append(f"video_shape.{key} is {value}")
+        if shape.get("protocol_valid") is False:
+            failures.append("video_shape.protocol_valid is false")
+    if failures and not force:
+        return video_json, make_video_apply_report(False, False, patches, failures, warnings, shape_doc, "")
+
+    patched = json.loads(json.dumps(video_json))
+    if width is not None and height is not None:
+        patch_scaler_modes(patched, width, height, mode_index, patches)
+        if not patches:
+            patch_top_level_dimensions(patched, width, height, patches)
+    if timing_hints:
+        add_video_timing_hints(patched, shape, patches)
+    changed = bool(patches)
+    return patched, make_video_apply_report(True, changed, patches, failures, warnings, shape_doc, "")
+
+
+def patch_scaler_modes(data: Any, width: int, height: int, mode_index: int | None, patches: list[dict[str, Any]], path: str = "") -> None:
+    if isinstance(data, dict):
+        modes = data.get("scaler_modes")
+        if isinstance(modes, list):
+            for idx, mode in enumerate(modes):
+                if mode_index is not None and idx != mode_index:
+                    continue
+                if not isinstance(mode, dict):
+                    continue
+                old_width = parse_optional_int(mode.get("width"))
+                old_height = parse_optional_int(mode.get("height"))
+                if old_width == width and old_height == height:
+                    continue
+                mode["width"] = width
+                mode["height"] = height
+                patches.append({
+                    "path": f"{path}/scaler_modes/{idx}",
+                    "old_width": old_width,
+                    "old_height": old_height,
+                    "new_width": width,
+                    "new_height": height,
+                })
+        for key, value in data.items():
+            if key == "scaler_modes":
+                continue
+            patch_scaler_modes(value, width, height, mode_index, patches, f"{path}/{key}")
+    elif isinstance(data, list):
+        for idx, value in enumerate(data):
+            patch_scaler_modes(value, width, height, mode_index, patches, f"{path}/{idx}")
+
+
+def patch_top_level_dimensions(data: dict[str, Any], width: int, height: int, patches: list[dict[str, Any]]) -> None:
+    target = data.get("video") if isinstance(data.get("video"), dict) else data
+    if not isinstance(target, dict):
+        return
+    old_width = parse_optional_int(target.get("width", target.get("expected_width")))
+    old_height = parse_optional_int(target.get("height", target.get("expected_height")))
+    width_key = "width" if "width" in target else "expected_width"
+    height_key = "height" if "height" in target else "expected_height"
+    if old_width == width and old_height == height:
+        return
+    target[width_key] = width
+    target[height_key] = height
+    patches.append({
+        "path": "/video" if target is not data else "",
+        "old_width": old_width,
+        "old_height": old_height,
+        "new_width": width,
+        "new_height": height,
+    })
+
+
+def add_video_timing_hints(data: dict[str, Any], shape: dict[str, Any], patches: list[dict[str, Any]]) -> None:
+    target = data.get("video") if isinstance(data.get("video"), dict) else data
+    if not isinstance(target, dict):
+        return
+    hint = {
+        "schema": "apfsim.video_shape_hint.v1",
+        "active_width": shape.get("active_width"),
+        "active_height": shape.get("active_height"),
+        "total_width_min": shape.get("total_width_min"),
+        "total_width_max": shape.get("total_width_max"),
+        "hs_to_de_gap_min": shape.get("hs_to_de_gap_min"),
+        "de_to_hs_gap_min": shape.get("de_to_hs_gap_min"),
+        "vs_to_first_de_lines": shape.get("vs_to_first_de_lines"),
+        "stable_dimensions": shape.get("stable_dimensions"),
+        "protocol_valid": shape.get("protocol_valid"),
+    }
+    if target.get("_apfsim_video_shape") == hint:
+        return
+    target["_apfsim_video_shape"] = hint
+    patches.append({"path": "/video/_apfsim_video_shape" if target is not data else "/_apfsim_video_shape", "timing_hints": True})
+
+
+def make_video_apply_report(
+    ok: bool,
+    changed: bool,
+    patches: list[dict[str, Any]],
+    failures: list[str],
+    warnings: list[str],
+    shape_doc: dict[str, Any],
+    output: str,
+) -> dict[str, Any]:
+    shape = shape_doc.get("video_shape") if isinstance(shape_doc.get("video_shape"), dict) else {}
+    return {
+        "schema": "apfsim.video_apply.v1",
+        "ok": ok,
+        "changed": changed,
+        "output": output,
+        "shape_source": shape_doc.get("source_result", ""),
+        "simulated": {
+            "active_width": shape.get("active_width"),
+            "active_height": shape.get("active_height"),
+            "stable_dimensions": shape.get("stable_dimensions"),
+            "protocol_valid": shape.get("protocol_valid"),
+        },
+        "patches": patches,
+        "failures": failures,
+        "warnings": warnings,
+    }
+
+
+def cmd_apply_video_shape(args: argparse.Namespace) -> int:
+    if args.in_place and args.out:
+        raise ApfSimError("apply-video-shape accepts either --out or --in-place, not both", phase="video-shape")
+    shape_doc = extract_video_shape_from_path(resolve_user_path(args.shape))
+    video_json_path = resolve_user_path(args.video_json)
+    video_json = load_json(video_json_path)
+    patched, report = apply_video_shape_to_json(
+        video_json,
+        shape_doc,
+        mode_index=args.mode_index,
+        timing_hints=args.timing_hints,
+        force=args.force,
+    )
+    output_path: Path | None = None
+    if report["ok"] and (args.out or args.in_place):
+        output_path = video_json_path if args.in_place else resolve_user_path(args.out)
+        if args.backup and output_path == video_json_path:
+            backup = video_json_path.with_suffix(video_json_path.suffix + ".bak")
+            backup.write_text(video_json_path.read_text())
+            report["backup"] = str(backup)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(patched, indent=2) + "\n")
+        report["output"] = str(output_path)
+    text = json.dumps(report, indent=2 if args.pretty else None, sort_keys=True) + "\n"
+    if args.json_out:
+        path = resolve_user_path(args.json_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    else:
+        print(text, end="")
+    if not report["ok"]:
+        for failure in report["failures"]:
+            eprint(f"FAIL apply-video-shape: {failure}")
+        return 2
+    return 0
 
 
 def cmd_analyze_log(args: argparse.Namespace) -> int:
@@ -425,6 +1269,114 @@ def cmd_analyze_log(args: argparse.Namespace) -> int:
     return 1 if args.strict_lifecycle and not report["ok"] else 0
 
 
+def cmd_discover(args: argparse.Namespace) -> int:
+    roots = [resolve_user_path(value) for value in (args.root or [str(root) for root in DEFAULT_DISCOVERY_ROOTS])]
+    report = discover_cores(roots, profiles_dir=PROFILES_DIR)
+    json_path, md_path = write_discovery_report(report, resolve_user_path(args.output))
+    print(f"discovered cores={report['core_count']} profiled={report['profiled_count']}")
+    for status, count in sorted(report["status_counts"].items()):
+        print(f"{status}: {count}")
+    for state, count in sorted(report.get("git_state_counts", {}).items()):
+        print(f"git-{state}: {count}")
+    print(f"json: {json_path}")
+    print(f"markdown: {md_path}")
+    return 0
+
+
+def cmd_generate_profile(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.output)
+    catalog = resolve_user_path(args.catalog) if args.catalog else DEFAULT_SHIM_CATALOG
+    try:
+        generated = generate_profile_candidate(
+            root,
+            output,
+            apfsim_dir=APFSIM_DIR,
+            profile_name=args.name,
+            catalog_path=catalog,
+            force=args.force,
+        )
+    except FileExistsError as exc:
+        raise ApfSimError(str(exc), phase="generate-profile") from exc
+    payload = {
+        "schema": "apfsim.generated_profile.v1",
+        "profile": generated.profile_name,
+        "root": str(generated.root),
+        "output_dir": str(generated.output_dir),
+        "paths": {
+            "profile": str(generated.profile_path),
+            "filelist": str(generated.filelist_path),
+            "scenario": str(generated.scenario_path),
+            "notes": str(generated.notes_path),
+            "report": str(generated.report_path),
+        },
+        "selected_shims": generated.selected_shims,
+        "warnings": generated.warnings,
+    }
+    if generated.qsf:
+        payload["qsf"] = generated.qsf
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"generated profile candidate: {generated.profile_name}")
+        print(f"profile: {generated.profile_path}")
+        print(f"filelist: {generated.filelist_path}")
+        print(f"scenario: {generated.scenario_path}")
+        print(f"notes: {generated.notes_path}")
+        if generated.selected_shims:
+            print("shim_catalog: " + ", ".join(generated.selected_shims))
+        if generated.warnings:
+            print("warnings:")
+            for warning in generated.warnings:
+                print(f"  - {warning}")
+    return 0
+
+
+def cmd_shim_catalog(args: argparse.Namespace) -> int:
+    catalog_path = resolve_user_path(args.catalog) if args.catalog else DEFAULT_SHIM_CATALOG
+    if args.profile:
+        if args.catalog:
+            path = profile_path(args.profile)
+            raw = load_json(path)
+            raw["shim_catalog_file"] = str(catalog_path)
+            name = str(raw.get("name") or path.stem)
+            profile = Profile(name=name, path=path, raw=expand_profile_shim_catalog(raw, name), root=profile_root(raw))
+        else:
+            profile = load_profile(args.profile)
+        payload = {
+            "schema": "apfsim.shim_catalog_expanded.v1",
+            "profile": profile.name,
+            "catalog": str(catalog_path),
+            "entries": profile.raw.get("shim_catalog_expanded", []),
+            "generated_files": [
+                item for item in profile.raw.get("generated_files", [])
+                if isinstance(item, dict) and item.get("catalog_entry")
+            ],
+            "required_paths": profile.raw.get("required_paths", []),
+        }
+    else:
+        catalog = load_shim_catalog(catalog_path)
+        payload = {
+            "schema": "apfsim.shim_catalog.v1",
+            "catalog": str(catalog_path),
+            "entries": [
+                {
+                    "name": name,
+                    "description": entry.get("description", ""),
+                    "generated_files": len(entry.get("generated_files", [])),
+                    "required_paths": len(entry.get("required_paths", [])),
+                }
+                for name, entry in sorted(catalog.items())
+            ],
+        }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for entry in payload["entries"]:
+            print(f"{entry['name']}: {entry.get('description', '')}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="apfsim")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -437,6 +1389,7 @@ def build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="build a Verilated simulator for a profile")
     build.add_argument("--profile", required=True)
     build.add_argument("--waves", action="store_true")
+    build.add_argument("--sdl", action="store_true", help="link the simulator with SDL2 for interactive play")
     build.add_argument("--preflight-only", action="store_true")
     build.set_defaults(func=cmd_build)
 
@@ -444,10 +1397,71 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_args(run)
     run.set_defaults(func=lambda ns: run_profile(ns, load_profile(ns.profile)))
 
+    play = sub.add_parser("play", help="boot a profile and play it in an SDL2 window")
+    add_run_args(play)
+    play.add_argument("--scale", type=int, default=3, help="integer window scale for active video")
+    play.add_argument("--speed-percent", type=int, default=100, help="presentation throttle; 0 means unthrottled")
+    play.set_defaults(func=cmd_play, timeout=0)
+
     test = sub.add_parser("test", help="run a profile matrix")
-    test.add_argument("--matrix", choices=["ci", "local-fast", "local-real"], default="local-fast")
+    test.add_argument("--matrix", choices=["ci", "local-fast", "local-real", "official-examples"], default="local-fast")
     add_run_args(test, include_profile=False)
     test.set_defaults(func=cmd_test)
+
+    discover = sub.add_parser("discover", help="inventory local Pocket/APF core checkouts and classify sim-readiness")
+    discover.add_argument("--root", action="append", help="root to scan; repeatable. If omitted, APFSIM_DISCOVERY_ROOTS is split on the OS path separator")
+    discover.add_argument("--output", default="output/core-inventory", help="directory for cores.json and cores.md")
+    discover.set_defaults(func=cmd_discover)
+
+    gen_profile = sub.add_parser("generate-profile", help="generate a reviewable profile/filelist/scenario candidate for a core checkout")
+    gen_profile.add_argument("--root", required=True, help="Pocket core checkout root")
+    gen_profile.add_argument("--name", help="profile name; defaults to normalized checkout name")
+    gen_profile.add_argument("--output", default="output/generated-profiles", help="directory for generated profile bundles")
+    gen_profile.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")
+    gen_profile.add_argument("--force", action="store_true", help="overwrite an existing generated bundle")
+    gen_profile.add_argument("--json", action="store_true", help="emit machine-readable generation report")
+    gen_profile.set_defaults(func=cmd_generate_profile)
+
+    shim_catalog = sub.add_parser("shim-catalog", help="list shim/substitution catalog entries or show profile expansion")
+    shim_catalog.add_argument("--catalog", help="catalog JSON path; defaults to catalogs/shims.json")
+    shim_catalog.add_argument("--profile", help="profile to expand through the catalog")
+    shim_catalog.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    shim_catalog.set_defaults(func=cmd_shim_catalog)
+
+    validate = sub.add_parser("validate-artifacts", help="validate a run artifact directory and update derived contract files")
+    validate.add_argument("artifact_dir", help="directory containing result.json and run artifacts")
+    validate.add_argument("--video-json", help="optional APF video.json to compare frame dimensions against")
+    validate.add_argument("--no-update", action="store_true", help="do not add derived phases/lifecycle to result.json or lifecycle.json")
+    validate.set_defaults(func=cmd_validate_artifacts)
+
+    video_shape = sub.add_parser("video-shape", help="extract or run stable APF-facing video timing/shape discovery")
+    video_shape.add_argument("result", nargs="?", help="path to result.json, video_shape.json, or an artifact directory")
+    video_shape.add_argument("--profile", help="run a profile first, then emit the discovered video shape")
+    add_run_args(video_shape, include_profile=False)
+    video_shape.add_argument("--json-out", help="write the video shape document to this path instead of stdout")
+    video_shape.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    video_shape.set_defaults(func=cmd_video_shape)
+
+    compare_video = sub.add_parser("compare-video-json", help="compare discovered video_shape against APF video.json scaler dimensions")
+    compare_video.add_argument("--shape", required=True, help="path to result.json, video_shape.json, or an artifact directory")
+    compare_video.add_argument("--video-json", required=True, help="path to APF video.json")
+    compare_video.add_argument("--json-out", help="write comparison report JSON to this path")
+    compare_video.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    compare_video.add_argument("--allow-swapped", action="store_true", help="allow width/height swapped matches as warnings instead of hard failures")
+    compare_video.set_defaults(func=cmd_compare_video_json)
+
+    apply_video = sub.add_parser("apply-video-shape", help="patch APF video.json scaler dimensions from a discovered video_shape")
+    apply_video.add_argument("--shape", required=True, help="path to result.json, video_shape.json, or an artifact directory")
+    apply_video.add_argument("--video-json", required=True, help="path to APF video.json to patch")
+    apply_video.add_argument("--out", help="write patched video.json here")
+    apply_video.add_argument("--in-place", action="store_true", help="overwrite --video-json")
+    apply_video.add_argument("--backup", action="store_true", help="write <video.json>.bak before --in-place overwrite")
+    apply_video.add_argument("--mode-index", type=int, help="patch only one scaler_modes index; default patches all scaler modes")
+    apply_video.add_argument("--timing-hints", action="store_true", help="add _apfsim_video_shape timing hints from the discovered shape")
+    apply_video.add_argument("--force", action="store_true", help="patch even if video_shape is unstable or has protocol errors")
+    apply_video.add_argument("--json-out", help="write apply report JSON to this path")
+    apply_video.add_argument("--pretty", action="store_true", help="pretty-print report JSON")
+    apply_video.set_defaults(func=cmd_apply_video_shape)
 
     analyze = sub.add_parser("analyze-log", help="extract APF lifecycle events from Pocket or apfsim logs")
     analyze.add_argument("log", nargs="+")
@@ -472,6 +1486,12 @@ def add_run_args(parser: argparse.ArgumentParser, include_profile: bool = True) 
     parser.add_argument("--no-clean-artifacts", dest="clean_artifacts", action="store_false")
     parser.add_argument("--waves", action="store_true")
     parser.add_argument("--verbose-bridge", action="store_true")
+    parser.add_argument("--bridge-read-latency-cycles", type=int)
+    parser.add_argument("--bridge-write-strobe-cycles", type=int)
+    parser.add_argument("--bridge-endian", choices=["little", "big"])
+    parser.add_argument("--target-service-interval-cycles", type=int, help="poll target-to-host commands during runtime every N clk_74a cycles; 0 disables runtime polling")
+    parser.add_argument("--interact-no-verify", action="store_true", help="apply persistent interact writes without immediate readback verification")
+    parser.add_argument("--bridge-trace", action="store_true", help="write bridge_transactions.jsonl with every bridge read/write")
     parser.set_defaults(clean_artifacts=True)
 
 

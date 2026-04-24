@@ -1,16 +1,18 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASICASSETS_ROOT = Path("/Users/ericlewis/Developer/core-example-basicassets")
+BASICASSETS_ROOT = os.environ.get("CORE_EXAMPLE_BASICASSETS_ROOT") or os.environ.get("BASICASSETS_ROOT")
+BASICASSETS_ROOT_PATH = Path(BASICASSETS_ROOT) if BASICASSETS_ROOT else None
 
 
 def test_basicassets_boot_data_video_audio():
     if shutil.which("verilator") is None:
         import pytest
         pytest.skip("verilator not installed")
-    if not BASICASSETS_ROOT.exists():
+    if BASICASSETS_ROOT_PATH is None or not BASICASSETS_ROOT_PATH.exists():
         import pytest
         pytest.skip("BasicAssets checkout not present")
     r = subprocess.run([
