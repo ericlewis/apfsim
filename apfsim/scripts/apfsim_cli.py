@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from artifact_validator import ArtifactValidationError, annotate_result_phases, validate_artifacts
+from corpus_runner import run_corpus_manifest
 from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
 from diagnostics import write_diagnostics
 from log_analyzer import analyze_logs, write_json_report
@@ -905,6 +906,38 @@ def cmd_summarize_run(args: argparse.Namespace) -> int:
     return 1 if args.strict and not doc.get("ok") else 0
 
 
+def cmd_corpus_run(args: argparse.Namespace) -> int:
+    manifest = resolve_user_path(args.manifest)
+    out = resolve_user_path(args.out)
+    apfsim_cmd = args.apfsim_cmd or str(APFSIM_DIR / "bin" / "apfsim")
+    try:
+        doc = run_corpus_manifest(
+            manifest,
+            out,
+            apfsim_cmd=apfsim_cmd,
+            strict=args.strict,
+            fail_fast=args.fail_fast,
+        )
+    except (OSError, ValueError) as exc:
+        raise ApfSimError(str(exc), phase="corpus") from exc
+    totals = doc["totals"]
+    print(
+        "corpus: "
+        f"total={totals['total']} "
+        f"passed={totals['passed']} "
+        f"failed={totals['failed']} "
+        f"skipped={totals['skipped']}"
+    )
+    if doc.get("top_blockers"):
+        blockers = ", ".join(f"{item['code']}={item['count']}" for item in doc["top_blockers"][:8])
+        print(f"top blockers: {blockers}")
+    print(f"json: {out / 'corpus_summary.json'}")
+    print(f"tsv: {out / 'corpus_summary.tsv'}")
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    return 1 if args.strict and totals["failed"] else 0
+
+
 def first_diagnostic_code(doc: dict[str, Any], *, severity: str) -> str:
     for item in doc.get("diagnostics", []):
         if isinstance(item, dict) and item.get("severity") == severity:
@@ -1751,6 +1784,18 @@ def build_parser() -> argparse.ArgumentParser:
     summarize.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
     summarize.add_argument("--strict", action="store_true", help="return nonzero when summary ok=false")
     summarize.set_defaults(func=cmd_summarize_run)
+
+    corpus = sub.add_parser("corpus", help="run manifest-driven bring-up corpora and aggregate rows")
+    corpus_sub = corpus.add_subparsers(dest="corpus_cmd", required=True)
+    corpus_run = corpus_sub.add_parser("run", help="run a corpus manifest through bringup/package stages")
+    corpus_run.add_argument("--manifest", required=True, help="corpus manifest JSON or simple YAML")
+    corpus_run.add_argument("--out", required=True, help="corpus artifact directory")
+    corpus_run.add_argument("--strict", action="store_true", help="return nonzero if any core fails")
+    corpus_run.add_argument("--fail-fast", action="store_true", help="stop after the first failed core")
+    corpus_run.add_argument("--apfsim-cmd", help=argparse.SUPPRESS)
+    corpus_run.add_argument("--json", action="store_true", help="print corpus_summary JSON after the concise summary")
+    corpus_run.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    corpus_run.set_defaults(func=cmd_corpus_run)
 
     diagnose = sub.add_parser("diagnose", help="classify run artifacts into stable APF contract diagnostics")
     diagnose.add_argument("artifact_dir", help="directory containing result.json and run artifacts")

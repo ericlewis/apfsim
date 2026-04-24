@@ -66,6 +66,15 @@ bin/apfsim summarize-run \
   --strict
 ```
 
+Manifest-driven corpus:
+
+```sh
+bin/apfsim corpus run \
+  --manifest output/corpus/manifest.yml \
+  --out output/corpus/run \
+  --strict
+```
+
 Video shape loop:
 
 ```sh
@@ -86,6 +95,7 @@ Read these first:
 - `source_provenance.json`: sim-only shims/generated files/provenance.
 - `package_check.json`: APF metadata and SD-card path validation.
 - `summary.json` / `summary.tsv`: normalized one-row output for corpus/coreir consumption.
+- `corpus_summary.json` / `corpus_summary.tsv`: aggregate manifest-run output for batch decisions.
 - `repair-plan.json`: optional repair suggestions from `bringup --repair`.
 
 ## Observable Field Map
@@ -127,6 +137,50 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 `bin/apfsim summarize-run` emits this row today as `summary.json.row` and `summary.tsv`. `bringup` writes both automatically after package-check, run, diagnose, and optional repair-plan.
 
 The first blocking diagnostic should determine the immediate next action. Do not treat `boot reached running` as a pass if video/audio/data/package gates fail.
+
+## Corpus Manifest
+
+Use `corpus run` as the batch boundary between a generator and `apfsim`. The manifest can be JSON or the simple YAML subset below:
+
+```yaml
+defaults:
+  frames: 60
+  timeout: 600
+  repair: true
+cores:
+  - name: mock-gate
+    profile: mock_port_gate
+    family: direct-mode
+  - name: generated-core
+    root: /path/to/openFPGA-Core
+    rom: /path/to/game.rom
+    expected_platform_id: arcade_generated
+    auto_profile: true
+    family: direct-mode
+  - name: package-only
+    root: /path/to/SD-package
+    expected_platform_id: arcade_generated
+    stop_stage: package
+```
+
+Recommended row fields:
+
+- `name`: stable generator-facing core id.
+- `profile`: existing `apfsim` profile name or path.
+- `root`: checkout or SD package root for `bringup --auto-profile` or `package-check`.
+- `rom`: primary ROM/asset path to bind to slot 1 unless `rom_slot_id` is set.
+- `expected_platform_id`: package validator assertion.
+- `family`: `direct-mode`, `shell-mode`, or `architecture-block`.
+- `stop_stage`: `bringup` by default, or `package` for metadata-only queue checks.
+
+`corpus_summary.json` is the batch API:
+
+- `totals`: total, passed, failed, skipped.
+- `family_counts`: distribution across the early family classification.
+- `top_blockers`: stable failure-code counts for roadmap selection.
+- `cores[]`: one normalized row per manifest entry, including `summary_path`, `package_check_path`, `first_error_code`, video/audio/data fields, and artifact paths.
+
+Root-missing entries are skipped so agents can share manifests across machines. Missing ROMs/assets are failures with `ROM_MISSING` because they indicate a bad generator input or package manifest. Use `--strict` when the corpus is a CI gate; omit it for exploratory inventory runs.
 
 ## Shape Repair Loop
 

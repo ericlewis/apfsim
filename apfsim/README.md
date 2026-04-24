@@ -121,6 +121,48 @@ bin/apfsim package-check --root /path/to/core-or-package --json-out output/packa
 bin/apfsim summarize-run output/bringup/core-name/run --json-out output/summary.json --tsv-out output/summary.tsv --strict
 ```
 
+### Run A Bring-Up Corpus
+
+Use `corpus run` when a generator or maintainer wants one manifest to drive many cores through bring-up or package-only stages:
+
+```sh
+bin/apfsim corpus run \
+  --manifest output/corpus/manifest.yml \
+  --out output/corpus/run \
+  --strict
+```
+
+Example manifest:
+
+```yaml
+defaults:
+  frames: 60
+  timeout: 600
+  repair: true
+cores:
+  - name: mock-gate
+    profile: mock_port_gate
+    family: direct-mode
+  - name: generated-core
+    root: /path/to/openFPGA-Core
+    rom: /path/to/game.rom
+    expected_platform_id: arcade_generated
+    auto_profile: true
+    family: direct-mode
+  - name: package-only
+    root: /path/to/SD-package
+    expected_platform_id: arcade_generated
+    stop_stage: package
+```
+
+Stable outputs:
+
+- `corpus_summary.json`: aggregate pass/fail/skip totals, family counts, top blockers, and one normalized row per core.
+- `corpus_summary.tsv`: spreadsheet-friendly view of the same per-core rows.
+- `cores/<name>/run/summary.json`: the per-core run row emitted by `bringup`.
+
+Root-missing entries are skipped so local inventories can be shared. Missing ROMs/assets are preflight failures because they indicate a generator/package input problem.
+
 ### Bring Up A Core
 
 `bringup` is the high-level command intended to grow into discover, profile generation, simulation, diagnosis, repair planning, and rerun:
@@ -241,6 +283,7 @@ A run writes a stable artifact directory. Important files:
 - `repair-plan.json`: optional reviewable repair suggestions from `bringup --repair`.
 - `package_check.json`: package metadata and SD-card path validation.
 - `summary.json` / `summary.tsv`: normalized one-row output for corpus and generator consumption.
+- `corpus_summary.json` / `corpus_summary.tsv`: aggregate output from `corpus run`.
 - `video_shape.json`: APF-facing runtime video contract.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers.
 - `bridge.log`: human-readable APF command and data-slot flow.

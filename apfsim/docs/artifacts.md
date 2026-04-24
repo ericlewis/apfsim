@@ -14,6 +14,8 @@ A profile run writes a stable artifact directory. Important files:
 - `package_check.json`: package metadata and SD-card path validation, schema `apfsim.package_check.v1`.
 - `summary.json`: normalized per-run row for corpus and generator consumption, schema `apfsim.run_summary.v1`.
 - `summary.tsv`: one-row tab-separated form of `summary.json.row`.
+- `corpus_summary.json`: aggregate manifest-run report from `corpus run`, schema `apfsim.corpus_summary.v1`.
+- `corpus_summary.tsv`: one-row-per-core tab-separated form of `corpus_summary.json.cores`.
 - `video/frame_*.json`: per-frame timing/content metadata.
 - `video/frame_*.ppm`: captured frames.
 - `audio/out.wav`: decoded stereo audio.
@@ -54,5 +56,13 @@ Flatten a run into a corpus row:
 ```sh
 bin/apfsim summarize-run path/to/run-dir --json-out summary.json --tsv-out summary.tsv --strict
 ```
+
+Run a manifest-driven bring-up corpus:
+
+```sh
+bin/apfsim corpus run --manifest corpus.yml --out output/corpus --strict
+```
+
+`corpus run` writes `corpus_summary.json`, `corpus_summary.tsv`, and one subdirectory per core under `cores/<name>/`. Root-missing entries are marked `skipped`; missing ROMs/assets, package errors, simulation failures, and diagnostic errors are marked `failed`.
 
 Public JSON schemas live in `schemas/*.schema.json`. These schemas are intentionally permissive for additive fields but strict about the stable contract keys used by downstream tools.
