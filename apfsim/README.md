@@ -121,6 +121,8 @@ expect:
     min_hs_after_vs_cycles: 3
     min_hs_to_de_gap_cycles: 1
     min_de_to_hs_gap_cycles: 1
+    min_unique_colors: 2
+    min_nonzero_pixels: 1
   audio:
     min_samples: 64
     require_changing: true
@@ -145,7 +147,7 @@ expect:
         mask: 0xffffffff
 ```
 
-Each run writes the measured values to `result.json`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
+Each run writes the measured values to `result.json`. Video frame JSON also includes content metrics: `unique_colors`, `nonzero_pixels`, `changed_pixels_from_previous`, and `frame_hash`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
 
 ## Build Targets
 

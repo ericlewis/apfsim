@@ -210,6 +210,11 @@ static void write_result_json(
         << ", \"rgb_when_de_low_errors\": " << meta.rgb_when_de_low_errors
         << ", \"pulse_width_errors\": " << meta.pulse_width_errors
         << ", \"skip_errors\": " << meta.skip_errors
+        << ", \"unique_colors\": " << meta.unique_colors
+        << ", \"nonzero_pixels\": " << meta.nonzero_pixels
+        << ", \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous
+        << ", \"frame_hash\": \"" << hex32(static_cast<uint32_t>(meta.frame_hash >> 32))
+        << hex32(static_cast<uint32_t>(meta.frame_hash)).substr(2) << "\""
         << ", \"errors\": " << video.errors() << " },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
@@ -337,6 +342,9 @@ static void validate_video(Assertions& asserts, const Scenario& scenario, const 
     if (expect.min_hs_after_vs_cycles && meta.hs_after_vs_gap_min < expect.min_hs_after_vs_cycles) asserts.fail("video: HS occurred too soon after VS");
     if (expect.min_hs_to_de_gap_cycles && meta.hs_to_de_gap_min < expect.min_hs_to_de_gap_cycles) asserts.fail("video: DE asserted too soon after HS");
     if (expect.min_de_to_hs_gap_cycles && meta.de_to_hs_gap_min < expect.min_de_to_hs_gap_cycles) asserts.fail("video: HS occurred too soon after DE fell");
+    if (expect.min_unique_colors && meta.unique_colors < expect.min_unique_colors) asserts.fail("video: unique color count below expectation");
+    if (expect.min_nonzero_pixels && meta.nonzero_pixels < expect.min_nonzero_pixels) asserts.fail("video: nonzero pixel count below expectation");
+    if (expect.min_changed_pixels && meta.changed_pixels_from_previous < expect.min_changed_pixels) asserts.fail("video: changed pixel count below expectation");
     if ((expect.min_refresh_hz || expect.max_refresh_hz) && expect.pixel_clock_hz > 0.0 && meta.total_pixel_clocks > 0) {
         const double refresh = expect.pixel_clock_hz / static_cast<double>(meta.total_pixel_clocks);
         if (expect.min_refresh_hz && refresh < expect.min_refresh_hz) asserts.fail("video: refresh below expected range");

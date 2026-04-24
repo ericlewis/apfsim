@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace apfsim {
@@ -30,6 +31,10 @@ struct FrameMetadata {
     uint64_t rgb_when_de_low_errors = 0;
     uint64_t pulse_width_errors = 0;
     uint64_t skip_errors = 0;
+    uint64_t unique_colors = 0;
+    uint64_t nonzero_pixels = 0;
+    uint64_t changed_pixels_from_previous = 0;
+    uint64_t frame_hash = 0;
 };
 
 class VideoCapture {
@@ -75,6 +80,7 @@ public:
         total_errors_ = 0;
         current_ = {};
         last_metadata_ = {};
+        previous_frame_pixels_.clear();
         current_line_.clear();
         current_lines_.clear();
         if (!dump_dir_.empty()) {
@@ -230,9 +236,43 @@ private:
             ++current_.de_errors;
             ++total_errors_;
         }
+        compute_content_metrics();
         ++frames_completed_;
         last_metadata_ = current_;
         if (!dump_dir_.empty()) dump_frame(current_, current_lines_);
+    }
+
+    void compute_content_metrics() {
+        std::vector<uint32_t> pixels;
+        pixels.reserve(current_.active_width * current_.active_height);
+        std::unordered_set<uint32_t> colors;
+        uint64_t hash = 1469598103934665603ull;
+        uint64_t nonzero = 0;
+        for (const auto& line : current_lines_) {
+            for (size_t x = 0; x < current_.active_width; ++x) {
+                const uint32_t rgb = x < line.size() ? line[x] : 0;
+                pixels.push_back(rgb);
+                colors.insert(rgb);
+                if (rgb != 0) ++nonzero;
+                hash ^= rgb & 0xFFu;
+                hash *= 1099511628211ull;
+                hash ^= (rgb >> 8) & 0xFFu;
+                hash *= 1099511628211ull;
+                hash ^= (rgb >> 16) & 0xFFu;
+                hash *= 1099511628211ull;
+            }
+        }
+        uint64_t changed = 0;
+        if (previous_frame_pixels_.size() == pixels.size()) {
+            for (size_t i = 0; i < pixels.size(); ++i) {
+                if (pixels[i] != previous_frame_pixels_[i]) ++changed;
+            }
+        }
+        current_.unique_colors = colors.size();
+        current_.nonzero_pixels = nonzero;
+        current_.changed_pixels_from_previous = changed;
+        current_.frame_hash = hash;
+        previous_frame_pixels_ = std::move(pixels);
     }
 
     void dump_frame(const FrameMetadata& meta, const std::vector<std::vector<uint32_t>>& lines) const {
@@ -271,7 +311,12 @@ private:
             js << "  \"de_errors\": " << meta.de_errors << ",\n";
             js << "  \"rgb_when_de_low_errors\": " << meta.rgb_when_de_low_errors << ",\n";
             js << "  \"pulse_width_errors\": " << meta.pulse_width_errors << ",\n";
-            js << "  \"skip_errors\": " << meta.skip_errors << "\n";
+            js << "  \"skip_errors\": " << meta.skip_errors << ",\n";
+            js << "  \"unique_colors\": " << meta.unique_colors << ",\n";
+            js << "  \"nonzero_pixels\": " << meta.nonzero_pixels << ",\n";
+            js << "  \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous << ",\n";
+            js << "  \"frame_hash\": \"" << hex32(static_cast<uint32_t>(meta.frame_hash >> 32))
+               << hex32(static_cast<uint32_t>(meta.frame_hash)).substr(2) << "\"\n";
             js << "}\n";
         }
     }
@@ -303,6 +348,7 @@ private:
     FrameMetadata last_metadata_;
     std::vector<uint32_t> current_line_;
     std::vector<std::vector<uint32_t>> current_lines_;
+    std::vector<uint32_t> previous_frame_pixels_;
 };
 
 inline std::pair<size_t, size_t> parse_video_json_dimensions(const std::filesystem::path& path) {

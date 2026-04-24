@@ -32,6 +32,7 @@ expect:
     require_rgb_zero_when_de_low: true
     require_single_cycle_sync: true
     require_skip_only_during_de: true
+    min_unique_colors: 2
   audio:
     min_samples: 128
   data:

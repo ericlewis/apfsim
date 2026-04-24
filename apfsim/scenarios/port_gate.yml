@@ -35,6 +35,8 @@ expect:
     min_hs_after_vs_cycles: 3
     min_hs_to_de_gap_cycles: 1
     min_de_to_hs_gap_cycles: 1
+    min_unique_colors: 2
+    min_nonzero_pixels: 1
   audio:
     min_samples: 64
     require_changing: true

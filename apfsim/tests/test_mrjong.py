@@ -48,5 +48,6 @@ def test_mrjong_real_verilog_produces_nonblack_frames(tmp_path):
     assert result["video"]["active_width"] == 240
     assert result["video"]["active_height"] == 224
     assert result["video"]["errors"] == 0
+    assert result["video"]["unique_colors"] > 1
     assert result["input"]["ever_active"] is True
     assert ppm_unique_colors(artifacts / "video" / "frame_000012.ppm") > 1

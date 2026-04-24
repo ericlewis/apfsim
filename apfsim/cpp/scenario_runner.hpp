@@ -25,6 +25,9 @@ struct VideoExpect {
     double pixel_clock_hz = 0.0;
     double min_refresh_hz = 0.0;
     double max_refresh_hz = 0.0;
+    uint64_t min_unique_colors = 0;
+    uint64_t min_nonzero_pixels = 0;
+    uint64_t min_changed_pixels = 0;
 };
 
 struct AudioExpect {
@@ -226,6 +229,9 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "pixel_clock_hz") scenario.video_expect.pixel_clock_hz = parse_double(value);
             else if (key == "min_refresh_hz") scenario.video_expect.min_refresh_hz = parse_double(value);
             else if (key == "max_refresh_hz") scenario.video_expect.max_refresh_hz = parse_double(value);
+            else if (key == "min_unique_colors") scenario.video_expect.min_unique_colors = parse_u64(value);
+            else if (key == "min_nonzero_pixels") scenario.video_expect.min_nonzero_pixels = parse_u64(value);
+            else if (key == "min_changed_pixels") scenario.video_expect.min_changed_pixels = parse_u64(value);
         } else if (section == Section::ExpectAudio) {
             if (key == "min_samples") scenario.audio_expect.min_samples = static_cast<size_t>(parse_u64(value));
             else if (key == "require_changing") scenario.audio_expect.require_changing = parse_bool(value);
