@@ -22,3 +22,10 @@ expect:
   video:
     active_width: 288
     active_height: 224
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
