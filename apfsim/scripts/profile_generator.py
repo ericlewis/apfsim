@@ -131,6 +131,7 @@ def generate_profile_candidate(
     jtframe_wrapper = maybe_generate_jtframe_pocket_wrapper(qsf_project, profile_dir)
     if jtframe_wrapper:
         generated_paths.append(str(jtframe_wrapper["path"]))
+        generated_paths.append("rtl_shims/external_memory_models.sv")
         wrapper_generation["jtframe_pocket_logical_wrapper"] = jtframe_wrapper
         for source in jtframe_wrapper.get("replaced_sources", []):
             excluded_sources.add(Path(str(source)).expanduser().resolve())
@@ -156,6 +157,7 @@ def generate_profile_candidate(
         required_paths.append(str(memory_wrapper["path"]))
     if jtframe_wrapper:
         required_paths.append(str(jtframe_wrapper["path"]))
+        required_paths.append("{apfsim}/rtl_shims/external_memory_models.sv")
     required_paths = dedupe(required_paths)
 
     profile: dict[str, Any] = {
@@ -187,6 +189,8 @@ def generate_profile_candidate(
         profile["shim_catalog"] = selected_shims
     if memory.get("required"):
         profile["memory"] = memory
+    if jtframe_wrapper:
+        profile["memory_activity"] = {"top_port_classes": ["sdram"]}
     if wrapper_generation:
         profile["wrapper_generation"] = wrapper_generation
     risks = profile_risks(inv, selected_shims, qsf_project)
@@ -750,9 +754,25 @@ def maybe_generate_jtframe_pocket_wrapper(qsf_project: QsfProject, profile_dir: 
         "confidence": "public_jtframe_shell_bypass",
         "source": str(jtframe_pocket),
         "replaced_sources": [str(pocket_top)],
+        "memory_model": {
+            "class": "sdram",
+            "module": "apfsim_sdram_pin_model",
+            "counter_ports": [
+                "apfsim_sdram_read_count",
+                "apfsim_sdram_write_count",
+                "apfsim_sdram_activate_count",
+                "apfsim_sdram_refresh_count",
+                "apfsim_sdram_command_error",
+                "apfsim_sdram_bus_contention_error",
+                "apfsim_sdram_byte_enable_error",
+                "apfsim_sdram_uninitialized_read_error",
+            ],
+            "confidence": "pin_level_bringup",
+        },
         "notes": (
             "Bypasses physical Pocket SPI/PAD/scaler DDR shell and instantiates "
-            "jtframe_pocket on apfsim's logical APF bridge/controller/video/audio contract."
+            "jtframe_pocket on apfsim's logical APF bridge/controller/video/audio contract. "
+            "Wires a public SDRAM pin model so memory_activity can report live counters."
         ),
     }
 
@@ -794,7 +814,15 @@ module core_top (
     output wire        video_skip,
     output wire        audio_mclk,
     output wire        audio_lrck,
-    output wire        audio_dac
+    output wire        audio_dac,
+    output wire [31:0] apfsim_sdram_read_count,
+    output wire [31:0] apfsim_sdram_write_count,
+    output wire [31:0] apfsim_sdram_activate_count,
+    output wire [31:0] apfsim_sdram_refresh_count,
+    output wire        apfsim_sdram_command_error,
+    output wire        apfsim_sdram_bus_contention_error,
+    output wire        apfsim_sdram_byte_enable_error,
+    output wire        apfsim_sdram_uninitialized_read_error
 );
 `ifdef JTFRAME_COLORW
     localparam integer COLORW = `JTFRAME_COLORW;
@@ -886,6 +914,32 @@ module core_top (
         .led(core_led),
         .pocket_debug_rgb(core_debug_rgb),
         .pocket_debug_flags(core_debug_flags)
+    );
+
+    apfsim_sdram_pin_model #(
+        .ADDR_WIDTH(24),
+        .COL_WIDTH(9),
+        .CAS_LATENCY(2),
+        .DEFAULT_BURST_LENGTH(8)
+    ) u_apfsim_sdram (
+        .Clk(sdram_clk),
+        .Cke(sdram_cke),
+        .Dq(sdram_dq),
+        .Addr(sdram_a),
+        .Ba(sdram_ba),
+        .Cs_n(sdram_ncs),
+        .Ras_n(sdram_nras),
+        .Cas_n(sdram_ncas),
+        .We_n(sdram_nwe),
+        .Dqm({sdram_dqmh, sdram_dqml}),
+        .read_count(apfsim_sdram_read_count),
+        .write_count(apfsim_sdram_write_count),
+        .activate_count(apfsim_sdram_activate_count),
+        .refresh_count(apfsim_sdram_refresh_count),
+        .command_error(apfsim_sdram_command_error),
+        .bus_contention_error(apfsim_sdram_bus_contention_error),
+        .byte_enable_error(apfsim_sdram_byte_enable_error),
+        .uninitialized_read_error(apfsim_sdram_uninitialized_read_error)
     );
 
     function automatic [7:0] expand8;

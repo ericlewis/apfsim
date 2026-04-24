@@ -56,6 +56,12 @@ def test_source_provenance_keeps_generated_sim_only_and_memory_counter_declarati
             "memory_models": {
                 "generated": True,
                 "activity_counters": ["sram_read_count", "sram_write_count"],
+            },
+            "jtframe_pocket_logical_wrapper": {
+                "memory_model": {
+                    "class": "sdram",
+                    "counter_ports": ["sdram_read_count", "sdram_write_count"],
+                },
             }
         },
     }
@@ -67,7 +73,12 @@ def test_source_provenance_keeps_generated_sim_only_and_memory_counter_declarati
     assert compat_path in doc["sim_only_paths"]
     assert doc["generated_file_provenance"][0]["path"] == compat_path
     memory = json.loads((tmp_path / "run" / "memory_activity.json").read_text())
-    assert memory["declared_counters"] == ["sram_read_count", "sram_write_count"]
+    assert memory["declared_counters"] == [
+        "sram_read_count",
+        "sram_write_count",
+        "sdram_read_count",
+        "sdram_write_count",
+    ]
     assert memory["counter_status"] == "declared_not_observed"
     assert memory["errors"][0]["code"] == "SRAM_MODEL_REQUIRED"
 

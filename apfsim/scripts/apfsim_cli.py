@@ -339,7 +339,7 @@ def memory_activity_top_port_classes(profile: Profile) -> list[str]:
     values = cfg.get("top_port_classes", profile.raw.get("memory_activity_top_port_classes", []))
     if isinstance(values, str):
         values = [values]
-    allowed = {"sram", "psram", "cram"}
+    allowed = {"sram", "psram", "cram", "sdram"}
     return [cls for cls in dedupe_strings(list(values) if isinstance(values, list) else []) if cls in allowed]
 
 
@@ -831,6 +831,14 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
     ]
     classes = [str(item) for item in memory_dependencies.get("classes", [])]
     declared_counters = [str(item) for item in memory_wrapper.get("activity_counters", [])]
+    for item in wrapper_generation.values():
+        if not isinstance(item, dict):
+            continue
+        model = item.get("memory_model")
+        if not isinstance(model, dict):
+            continue
+        declared_counters.extend(str(counter) for counter in model.get("counter_ports", []))
+    declared_counters = dedupe_strings(declared_counters)
     observed = bool(result_memory.get("observed"))
     runtime_counters = [
         item for item in result_memory.get("counters", [])

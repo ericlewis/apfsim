@@ -87,6 +87,12 @@ AVAILABLE_MODELS: dict[str, list[dict[str, str]]] = {
             "model": "ideal_transactional",
             "confidence": "bringup_only",
             "source": "rtl_shims/sdram_sim.sv",
+        },
+        {
+            "catalog_entry": "sdram_pin_model",
+            "model": "sdram_pin_level",
+            "confidence": "pin_level_bringup",
+            "source": "rtl_shims/external_memory_models.sv",
         }
     ],
     "sram": [

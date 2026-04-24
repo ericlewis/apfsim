@@ -269,7 +269,8 @@ Use `source_provenance.json`, generated-profile warnings, discovery risks, and d
 Memory classification policy:
 
 - `bram` and `fifo` generally mean internal behavioral shims are enough for APF contract smoke.
-- `sdram` currently means the generic idealized SDRAM model can unblock bring-up, but hardware confidence remains limited.
+- `sdram` can mean either the generic idealized request/ack SDRAM model or a generated pin-level SDRAM model. The pin-level path is better evidence when `memory_activity.observed` is true, but hardware confidence remains limited until command/error counters are clean and the model matches the target controller assumptions.
 - `sram`, `psram`, or `cram` can select public model-library scaffolds; treat the “missing model” risk as cleared only when `profile.memory.selected_model_classes` includes that class, but still require live wiring evidence before hardware confidence improves.
 - `ddr` should be treated as requiring explicit external RAM model work unless the profile names a stronger model.
 - Generated profiles emit `apfsim_memory_models.sv` for `sram`/`psram`/`cram` as a reviewable scaffold. Do not treat it as live memory validation until `memory_activity.observed` is true or a run-specific counter probe exists.
+- Generated JTFRAME logical wrappers can wire the public SDRAM pin model directly and expose `apfsim_sdram_*` counters. Treat `MEMORY_UNINITIALIZED_READ`, `SDRAM_COMMAND_ERROR`, `MEMORY_BUS_CONTENTION`, and `MEMORY_BYTE_ENABLE_MISMATCH` as blocking for ROM/RAM confidence even if boot/video pass.

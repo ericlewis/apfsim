@@ -391,7 +391,9 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
         "module pocket_top(input clk_74a, input clk_74b); jtframe_pocket u_core(); endmodule\n"
     )
     (fpga_dir / "core" / "jtframe_pocket.sv").write_text(
-        "module jtframe_pocket(input clk_74a, input clk_74b); endmodule\n"
+        "module jtframe_pocket(input clk_74a, input clk_74b, inout [15:0] SDRAM_DQ, output [12:0] SDRAM_A,"
+        " output [1:0] SDRAM_BA, output SDRAM_DQML, output SDRAM_DQMH, output SDRAM_nWE,"
+        " output SDRAM_nCAS, output SDRAM_nRAS, output SDRAM_nCS, output SDRAM_CLK, output SDRAM_CKE); endmodule\n"
     )
     (fpga_dir / "ap_core.qsf").write_text(
         "\n".join([
@@ -419,9 +421,16 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     wrapper = Path(report["paths"]["profile"]).parent / "apfsim_jtframe_pocket_wrapper.sv"
     wrapper_text = wrapper.read_text()
     assert profile["top"] == "core_top"
+    assert profile["memory_activity"]["top_port_classes"] == ["sdram"]
     assert wrapper.exists()
     assert "video_rgb_clock <= core_pxl_cen" in wrapper_text
+    assert "apfsim_sdram_pin_model" in wrapper_text
+    assert "apfsim_sdram_read_count" in wrapper_text
     assert "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv" in filelist
+    assert "rtl_shims/external_memory_models.sv" in filelist
     assert "{root}/src/fpga/core/pocket_top.sv" not in filelist
     assert "{root}/src/fpga/core/jtframe_pocket.sv" in filelist
+    assert "sdram_pin_model" in candidate["selected_shims"]
+    assert profile["memory"]["models"]["sdram"]["selected"] == "sdram_pin_level"
     assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["top"] == "core_top"
+    assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["class"] == "sdram"

@@ -251,3 +251,228 @@ module apfsim_cram_like_model #(
         .byte_enable_error(byte_enable_error)
     );
 endmodule
+
+module apfsim_sdram_pin_model #(
+    parameter integer ADDR_WIDTH = 24,
+    parameter integer COL_WIDTH = 9,
+    parameter integer CAS_LATENCY = 2,
+    parameter integer DEFAULT_BURST_LENGTH = 8
+) (
+    input  wire        Clk,
+    input  wire        Cke,
+    inout  wire [15:0] Dq,
+    input  wire [12:0] Addr,
+    input  wire [1:0]  Ba,
+    input  wire        Cs_n,
+    input  wire        Ras_n,
+    input  wire        Cas_n,
+    input  wire        We_n,
+    input  wire [1:0]  Dqm,
+
+    output reg  [31:0] read_count,
+    output reg  [31:0] write_count,
+    output reg  [31:0] activate_count,
+    output reg  [31:0] refresh_count,
+    output reg          command_error,
+    output reg          bus_contention_error,
+    output reg          byte_enable_error,
+    output reg          uninitialized_read_error
+);
+    localparam integer DEPTH = 1 << ADDR_WIDTH;
+    localparam integer ROW_WIDTH = ADDR_WIDTH - COL_WIDTH - 2;
+    localparam integer MAX_LATENCY = CAS_LATENCY < 1 ? 1 : CAS_LATENCY;
+
+    reg [15:0] mem [0:DEPTH-1];
+    reg        mem_valid [0:DEPTH-1];
+    reg [ROW_WIDTH-1:0] active_row [0:3];
+    reg [3:0] bank_active;
+    reg [2:0] burst_length;
+
+    reg [MAX_LATENCY-1:0] read_valid_pipe;
+    reg [ADDR_WIDTH-1:0] read_addr_pipe [0:MAX_LATENCY-1];
+    reg [1:0] read_dqm_pipe [0:MAX_LATENCY-1];
+    reg drive_enable;
+    reg [15:0] drive_data;
+    reg [1:0] drive_dqm;
+
+    reg [ADDR_WIDTH-1:0] read_burst_addr;
+    reg [3:0] read_burst_remaining;
+    reg [1:0] read_burst_dqm;
+    reg [ADDR_WIDTH-1:0] write_burst_addr;
+    reg [3:0] write_burst_remaining;
+
+    wire [15:0] drive_masked = {
+        drive_dqm[1] ? 8'hZZ : drive_data[15:8],
+        drive_dqm[0] ? 8'hZZ : drive_data[7:0]
+    };
+    assign Dq = drive_enable ? drive_masked : 16'hZZZZ;
+
+    wire command_cycle = Cke && !Cs_n;
+    wire cmd_active = command_cycle && !Ras_n &&  Cas_n &&  We_n;
+    wire cmd_read =   command_cycle &&  Ras_n && !Cas_n &&  We_n;
+    wire cmd_write =  command_cycle &&  Ras_n && !Cas_n && !We_n;
+    wire cmd_pre =    command_cycle && !Ras_n &&  Cas_n && !We_n;
+    wire cmd_refresh = command_cycle && !Ras_n && !Cas_n &&  We_n;
+    wire cmd_mode =   command_cycle && !Ras_n && !Cas_n && !We_n;
+    wire cmd_bterm =  command_cycle &&  Ras_n &&  Cas_n && !We_n;
+
+    function automatic [2:0] decode_burst_length(input [2:0] mode_bits);
+        begin
+            case (mode_bits)
+                3'b000: decode_burst_length = 3'd1;
+                3'b001: decode_burst_length = 3'd2;
+                3'b010: decode_burst_length = 3'd4;
+                3'b011: decode_burst_length = 3'd7; // encode eight beats as 7 plus first beat
+                default: decode_burst_length = DEFAULT_BURST_LENGTH[2:0] == 3'd0 ? 3'd7 : DEFAULT_BURST_LENGTH[2:0];
+            endcase
+        end
+    endfunction
+
+    function automatic [ADDR_WIDTH-1:0] linear_addr(input [1:0] bank, input [ROW_WIDTH-1:0] row, input [COL_WIDTH-1:0] col);
+        begin
+            linear_addr = {bank, row, col};
+        end
+    endfunction
+
+    function automatic [COL_WIDTH-1:0] command_col(input [12:0] addr);
+        begin
+            command_col = addr[COL_WIDTH-1:0];
+        end
+    endfunction
+
+    task automatic write_word(input [ADDR_WIDTH-1:0] addr, input [15:0] data, input [1:0] dqm);
+        reg [15:0] word;
+        begin
+            if (^dqm === 1'bx) byte_enable_error <= 1'b1;
+            word = mem_valid[addr] === 1'b1 ? mem[addr] : 16'h0000;
+            if (!dqm[0]) word[7:0] = data[7:0];
+            if (!dqm[1]) word[15:8] = data[15:8];
+            if (dqm != 2'b11) begin
+                mem[addr] <= word;
+                mem_valid[addr] <= 1'b1;
+                write_count <= write_count + 32'd1;
+            end
+        end
+    endtask
+
+    task automatic schedule_read(input [ADDR_WIDTH-1:0] addr, input [1:0] dqm);
+        begin
+            read_addr_pipe[0] <= addr;
+            read_dqm_pipe[0] <= dqm;
+            read_valid_pipe[0] <= 1'b1;
+            read_count <= read_count + 32'd1;
+        end
+    endtask
+
+    integer i;
+    initial begin
+        read_count = 32'd0;
+        write_count = 32'd0;
+        activate_count = 32'd0;
+        refresh_count = 32'd0;
+        command_error = 1'b0;
+        bus_contention_error = 1'b0;
+        byte_enable_error = 1'b0;
+        uninitialized_read_error = 1'b0;
+        bank_active = 4'd0;
+        burst_length = decode_burst_length(DEFAULT_BURST_LENGTH[2:0]);
+        read_valid_pipe = {MAX_LATENCY{1'b0}};
+        drive_enable = 1'b0;
+        drive_data = 16'h0000;
+        drive_dqm = 2'b11;
+        read_burst_addr = {ADDR_WIDTH{1'b0}};
+        read_burst_remaining = 4'd0;
+        read_burst_dqm = 2'b11;
+        write_burst_addr = {ADDR_WIDTH{1'b0}};
+        write_burst_remaining = 4'd0;
+        for (i = 0; i < 4; i = i + 1) active_row[i] = {ROW_WIDTH{1'b0}};
+    end
+
+    always @(posedge Clk) begin
+        reg [ADDR_WIDTH-1:0] access_addr;
+        reg [COL_WIDTH-1:0] col;
+
+        if (drive_enable && !drive_dqm[0] && (^Dq[7:0] === 1'bx)) bus_contention_error <= 1'b1;
+        if (drive_enable && !drive_dqm[1] && (^Dq[15:8] === 1'bx)) bus_contention_error <= 1'b1;
+
+        drive_enable <= read_valid_pipe[MAX_LATENCY-1];
+        drive_dqm <= read_dqm_pipe[MAX_LATENCY-1];
+        if (read_valid_pipe[MAX_LATENCY-1]) begin
+            if (mem_valid[read_addr_pipe[MAX_LATENCY-1]] === 1'b1) begin
+                drive_data <= mem[read_addr_pipe[MAX_LATENCY-1]];
+            end else begin
+                drive_data <= 16'h0000;
+                uninitialized_read_error <= 1'b1;
+            end
+        end
+
+        for (i = MAX_LATENCY - 1; i > 0; i = i - 1) begin
+            read_valid_pipe[i] <= read_valid_pipe[i - 1];
+            read_addr_pipe[i] <= read_addr_pipe[i - 1];
+            read_dqm_pipe[i] <= read_dqm_pipe[i - 1];
+        end
+        read_valid_pipe[0] <= 1'b0;
+        read_dqm_pipe[0] <= 2'b11;
+
+        if (cmd_mode) begin
+            burst_length <= decode_burst_length(Addr[2:0]);
+        end
+
+        if (cmd_refresh) refresh_count <= refresh_count + 32'd1;
+
+        if (cmd_active) begin
+            active_row[Ba] <= Addr[ROW_WIDTH-1:0];
+            bank_active[Ba] <= 1'b1;
+            activate_count <= activate_count + 32'd1;
+        end
+
+        if (cmd_pre) begin
+            if (Addr[10]) bank_active <= 4'd0;
+            else bank_active[Ba] <= 1'b0;
+            read_burst_remaining <= 4'd0;
+            write_burst_remaining <= 4'd0;
+        end
+
+        if (cmd_bterm) begin
+            read_burst_remaining <= 4'd0;
+            write_burst_remaining <= 4'd0;
+        end
+
+        if (cmd_read) begin
+            if (!bank_active[Ba]) begin
+                command_error <= 1'b1;
+            end else begin
+                col = command_col(Addr);
+                access_addr = linear_addr(Ba, active_row[Ba], col);
+                schedule_read(access_addr, Dqm);
+                if (burst_length > 3'd1) begin
+                    read_burst_addr <= access_addr + {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+                    read_burst_remaining <= {1'b0, burst_length} - 4'd1;
+                    read_burst_dqm <= Dqm;
+                end
+            end
+        end else if (read_burst_remaining != 4'd0) begin
+            schedule_read(read_burst_addr, read_burst_dqm);
+            read_burst_addr <= read_burst_addr + {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+            read_burst_remaining <= read_burst_remaining - 4'd1;
+        end
+
+        if (cmd_write) begin
+            if (!bank_active[Ba]) begin
+                command_error <= 1'b1;
+            end else begin
+                col = command_col(Addr);
+                access_addr = linear_addr(Ba, active_row[Ba], col);
+                write_word(access_addr, Dq, Dqm);
+                if (burst_length > 3'd1) begin
+                    write_burst_addr <= access_addr + {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+                    write_burst_remaining <= {1'b0, burst_length} - 4'd1;
+                end
+            end
+        end else if (write_burst_remaining != 4'd0) begin
+            write_word(write_burst_addr, Dq, Dqm);
+            write_burst_addr <= write_burst_addr + {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+            write_burst_remaining <= write_burst_remaining - 4'd1;
+        end
+    end
+endmodule

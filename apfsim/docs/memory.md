@@ -41,6 +41,7 @@ Runtime provenance writes the same information to `source_provenance.json`:
 - `memory_dependencies`: detected memory classes, evidence, risks, and default model choices.
 - `memory_models`: flattened selected model entries.
 - `wrapper_generation.memory_models`: generated wrapper scaffold metadata when SRAM/PSRAM/CRAM classes are detected.
+- `wrapper_generation.<family>.memory_model`: family wrapper memory model metadata, such as generated JTFRAME SDRAM pin counters.
 
 Every diagnosed run also writes `memory_activity.json`:
 
@@ -105,7 +106,7 @@ Do not enable this blindly for write-only loader windows. If a real core can loa
 | --- | --- | --- |
 | `bram` | Internal FPGA RAM such as `altsyncram`, `dpram`, simple dual-port RAM. | Behavioral shims exist. |
 | `fifo` | Internal FIFO such as `dcfifo`. | Behavioral shim exists. |
-| `sdram` | SDRAM controller or Sorgelig-style request/ack SDRAM module. | Idealized four-port bring-up model exists. |
+| `sdram` | SDRAM controller, Sorgelig-style request/ack SDRAM module, or SDRAM pin bus. | Idealized four-port bring-up model and public pin-level bring-up model exist. |
 | `sram` | External async SRAM pins or controller. | Generic async 16-bit pin model exists; wrapper wiring required. |
 | `psram` | PSRAM/HyperRAM/HyperBus style external RAM. | Generic transactional model library exists; controller-specific wiring required. |
 | `cram` | Cartridge RAM / CRAM-like external RAM. | Generic transactional model library exists; controller-specific wiring required. |
@@ -118,11 +119,35 @@ Do not enable this blindly for write-only loader windows. If a real core can loa
 
 It is not a Pocket-accurate SDRAM timing model. A pass with this model should be reported as `bringup_only` confidence, not hardware confidence.
 
+`rtl_shims/external_memory_models.sv` also provides `apfsim_sdram_pin_model`, a public SDRAM pin-bus model for generated wrappers that preserve SDRAM pins. It models basic ACTIVE/READ/WRITE/PRECHARGE/REFRESH command flow, bank/row selection, DQM byte masking, CAS-latency read return, and bus-contention/error counters. This is stronger than a compile stub because it observes real pin-level traffic, but it is still a bring-up model, not a cycle-accurate Pocket SDRAM timing replacement.
+
+Generated JTFRAME logical wrappers instantiate this model when public Pocket exports expose SDRAM pins and record:
+
+```json
+{
+  "memory_activity": {
+    "top_port_classes": ["sdram"]
+  },
+  "wrapper_generation": {
+    "jtframe_pocket_logical_wrapper": {
+      "memory_model": {
+        "class": "sdram",
+        "model": "apfsim_sdram_pin_model",
+        "confidence": "pin_level_bringup"
+      }
+    }
+  }
+}
+```
+
+After a run, `memory_activity.json.observed` should be `true` if the wrapper exposes the standard SDRAM counters and the C++ harness was built with SDRAM counter capture.
+
 ## External RAM Direction
 
 The first external RAM model library is `rtl_shims/external_memory_models.sv`:
 
 - `apfsim_async_sram_16_model`: async 16-bit SRAM pin model with `CE/OE/WE/LB/UB`, activity counters, byte-enable checks, and contention detection.
+- `apfsim_sdram_pin_model`: SDRAM pin-bus bring-up model with command, refresh, byte-enable, uninitialized-read, and bus-contention counters.
 - `apfsim_transactional_ram_model`: request/ack RAM model with configurable latency, byte enables, overrun detection, and read/write counters.
 - `apfsim_psram_like_model`: 16-bit latency-configurable transactional wrapper.
 - `apfsim_cram_like_model`: 16-bit latency-configurable transactional wrapper.
@@ -182,7 +207,7 @@ For live memory activity, a generated/core wrapper may expose standard top-level
 ```json
 {
   "memory_activity": {
-    "top_port_classes": ["sram", "psram", "cram"]
+    "top_port_classes": ["sram", "psram", "cram", "sdram"]
   }
 }
 ```
@@ -216,6 +241,19 @@ output wire        apfsim_cram_overrun_error,
 output wire        apfsim_cram_byte_enable_error
 ```
 
+Standard SDRAM ports:
+
+```systemverilog
+output wire [31:0] apfsim_sdram_read_count,
+output wire [31:0] apfsim_sdram_write_count,
+output wire [31:0] apfsim_sdram_activate_count,
+output wire [31:0] apfsim_sdram_refresh_count,
+output wire        apfsim_sdram_command_error,
+output wire        apfsim_sdram_bus_contention_error,
+output wire        apfsim_sdram_byte_enable_error,
+output wire        apfsim_sdram_uninitialized_read_error
+```
+
 When observed, `result.json.memory_activity` carries the runtime snapshot and the postprocessed `memory_activity.json` changes to:
 
 ```json
@@ -231,8 +269,11 @@ When observed, `result.json.memory_activity` carries the runtime snapshot and th
 Live counter errors are promoted into stable diagnostics:
 
 - `SRAM_BUS_CONTENTION`: SRAM model observed simultaneous output/read drive conflict.
+- `MEMORY_BUS_CONTENTION`: external RAM model observed conflicting bus drivers.
 - `MEMORY_BYTE_ENABLE_MISMATCH`: byte-enable pins were invalid for a write.
+- `MEMORY_UNINITIALIZED_READ`: model returned bytes that were never written or initialized.
 - `MEMORY_STALL_TIMEOUT`: transactional memory request arrived while the model was busy/overrun.
+- `SDRAM_COMMAND_ERROR`: SDRAM model observed invalid command sequencing, such as read/write without an open row.
 - `MEMORY_NO_ACTIVITY`: counters were observed but read/write counts stayed zero during a data-loaded run.
 
 Future external RAM work should add model families with explicit confidence levels:
@@ -242,6 +283,7 @@ Future external RAM work should add model families with explicit confidence leve
 - `pocket_sram_like`: async 16-bit SRAM bus with output-enable/write-enable behavior and contention checks.
 - `pocket_psram_like`: latency, byte-lane, burst, and wait-state behavior for PSRAM/CRAM-like uses.
 - `sdram_basic`: controller-facing transactional SDRAM with init/refresh/activity counters.
+- `sdram_pin_level`: pin-level SDRAM traffic model with command and DQM checks.
 - `random_latency`: stress profile with deterministic seed for wait-state/fault injection.
 
 Preferred diagnostics for future models:
@@ -253,7 +295,9 @@ Preferred diagnostics for future models:
 - `MEMORY_OUT_OF_RANGE`
 - `MEMORY_NO_ACTIVITY`
 - `MEMORY_STALL_TIMEOUT`
+- `MEMORY_BUS_CONTENTION`
 - `SDRAM_INIT_TIMEOUT`
+- `SDRAM_COMMAND_ERROR`
 - `SDRAM_REFRESH_MISSING`
 - `CRAM_MODEL_REQUIRED`
 - `PSRAM_MODEL_REQUIRED`

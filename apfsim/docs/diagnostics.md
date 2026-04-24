@@ -126,12 +126,15 @@ The first implemented taxonomy covers the APF-facing failures that block useful 
 - `SHIM_REQUIRED`
 - `VHDL_ENTITY_STUBBED`
 - `MEMORY_MODEL_REQUIRED`
+- `MEMORY_BUS_CONTENTION`
 - `MEMORY_BYTE_ENABLE_MISMATCH`
+- `MEMORY_UNINITIALIZED_READ`
 - `MEMORY_STALL_TIMEOUT`
 - `CRAM_MODEL_REQUIRED`
 - `PSRAM_MODEL_REQUIRED`
 - `SRAM_MODEL_REQUIRED`
 - `SRAM_BUS_CONTENTION`
+- `SDRAM_COMMAND_ERROR`
 
 The public schema does not restrict the code enum yet. New stable codes can be added without breaking older consumers, but existing code meanings should remain stable.
 

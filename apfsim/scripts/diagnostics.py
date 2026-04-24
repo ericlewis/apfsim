@@ -49,8 +49,10 @@ KNOWN_CODES = (
     "MEMORY_BYTE_ENABLE_MISMATCH",
     "MEMORY_UNINITIALIZED_READ",
     "MEMORY_OUT_OF_RANGE",
+    "MEMORY_BUS_CONTENTION",
     "MEMORY_NO_ACTIVITY",
     "MEMORY_STALL_TIMEOUT",
+    "SDRAM_COMMAND_ERROR",
     "SDRAM_INIT_TIMEOUT",
     "SDRAM_REFRESH_MISSING",
     "CRAM_MODEL_REQUIRED",
@@ -1062,7 +1064,7 @@ def _memory_counter_error_code(counter: dict[str, Any]) -> str:
         return explicit
     name = str(counter.get("name") or "").lower()
     if "bus_contention" in name:
-        return "SRAM_BUS_CONTENTION"
+        return "MEMORY_BUS_CONTENTION"
     if "byte_enable" in name:
         return "MEMORY_BYTE_ENABLE_MISMATCH"
     if "overrun" in name or "stall" in name:

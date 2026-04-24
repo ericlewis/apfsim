@@ -172,6 +172,20 @@
       "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_STALL_TIMEOUT"]
     },
     {
+      "name": "sdram_pin_model",
+      "kind": "behavioral_model_library",
+      "confidence": "pin_level_bringup",
+      "description": "Public SDRAM pin-bus model with activity and error counters for wrappers that expose physical SDRAM signals.",
+      "modules": ["apfsim_sdram_pin_model"],
+      "memory_classes": ["sdram"],
+      "detect": {
+        "source_patterns": ["\\bSDRAM_DQ\\b", "\\bSDRAM_nRAS\\b", "\\bsdram_nras\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_BYTE_ENABLE_MISMATCH", "MEMORY_BUS_CONTENTION", "MEMORY_UNINITIALIZED_READ", "SDRAM_COMMAND_ERROR", "SDRAM_REFRESH_MISSING"]
+    },
+    {
       "name": "external_sram_pin_model",
       "kind": "behavioral_model_library",
       "confidence": "sim_only",

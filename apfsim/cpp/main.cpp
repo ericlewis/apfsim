@@ -213,6 +213,17 @@ static MemoryActivitySnapshot capture_memory_activity(Top* top) {
     snapshot.counters.push_back({"cram_overrun_error", "cram", static_cast<uint64_t>(top->apfsim_cram_overrun_error), top->apfsim_cram_overrun_error != 0, "MEMORY_STALL_TIMEOUT"});
     snapshot.counters.push_back({"cram_byte_enable_error", "cram", static_cast<uint64_t>(top->apfsim_cram_byte_enable_error), top->apfsim_cram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
 #endif
+#if APFSIM_MEMORY_COUNTER_SDRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"sdram_read_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_read_count), false, ""});
+    snapshot.counters.push_back({"sdram_write_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_write_count), false, ""});
+    snapshot.counters.push_back({"sdram_activate_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_activate_count), false, ""});
+    snapshot.counters.push_back({"sdram_refresh_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_refresh_count), false, ""});
+    snapshot.counters.push_back({"sdram_command_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_command_error), top->apfsim_sdram_command_error != 0, "SDRAM_COMMAND_ERROR"});
+    snapshot.counters.push_back({"sdram_bus_contention_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_bus_contention_error), top->apfsim_sdram_bus_contention_error != 0, "MEMORY_BUS_CONTENTION"});
+    snapshot.counters.push_back({"sdram_byte_enable_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_byte_enable_error), top->apfsim_sdram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+    snapshot.counters.push_back({"sdram_uninitialized_read_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_uninitialized_read_error), top->apfsim_sdram_uninitialized_read_error != 0, "MEMORY_UNINITIALIZED_READ"});
+#endif
     return snapshot;
 }
 

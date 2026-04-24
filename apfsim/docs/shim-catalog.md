@@ -45,6 +45,7 @@ Current public entries cover:
 - common LPM arithmetic: `intel_lpm_arithmetic`
 - JTFRAME T80s public translation/fallback strategy: `jtframe_t80s_public_translation`
 - idealized request/ack SDRAM: `sdram_ideal_transactional`
+- pin-level SDRAM bring-up model: `sdram_pin_model`
 - async external SRAM model library: `external_sram_pin_model`
 - PSRAM/CRAM-like transactional model library: `psram_cram_transactional_models`
 
@@ -56,3 +57,4 @@ JTFRAME policy:
 - If the translated public RTL exists, it is added to the generated filelist and the detail record has `fallback_used: false`.
 - If it does not exist, `rtl_shims/jtframe_t80s_stub.sv` is used only as an explicit compile-only fallback. Treat any passing run with that fallback as shell/profile validation, not gameplay validation.
 - QSF top `pocket_top` plus public `jtframe_pocket` enables generated logical-wrapper mode. The wrapper replaces the physical Pocket shell, adapts the bridge directly, emits one-cycle APF HS/VS pulses, and exposes video at `video_pxl_cen` cadence so video-shape discovery sees the real active width.
+- Generated JTFRAME logical-wrapper mode wires `sdram_pin_model` when SDRAM pins are present. A useful pass should show `memory_activity.observed: true` with nonzero SDRAM read/write/activate/refresh counters and zero command/contention/byte-enable errors.
