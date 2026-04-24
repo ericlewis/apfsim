@@ -11,6 +11,9 @@ A profile run writes a stable artifact directory. Important files:
 - `bridge.log`: human-readable APF command and data-slot flow.
 - `bridge_summary.json`: bridge counters and command history.
 - `source_provenance.json`: profile root, generated files, sim-only paths, and shim catalog provenance.
+- `package_check.json`: package metadata and SD-card path validation, schema `apfsim.package_check.v1`.
+- `summary.json`: normalized per-run row for corpus and generator consumption, schema `apfsim.run_summary.v1`.
+- `summary.tsv`: one-row tab-separated form of `summary.json.row`.
 - `video/frame_*.json`: per-frame timing/content metadata.
 - `video/frame_*.ppm`: captured frames.
 - `audio/out.wav`: decoded stereo audio.
@@ -38,6 +41,18 @@ Classify an existing run into diagnostics:
 
 ```sh
 bin/apfsim diagnose path/to/run-dir --strict
+```
+
+Validate package metadata:
+
+```sh
+bin/apfsim package-check --root /path/to/core-or-package --json-out package_check.json --strict
+```
+
+Flatten a run into a corpus row:
+
+```sh
+bin/apfsim summarize-run path/to/run-dir --json-out summary.json --tsv-out summary.tsv --strict
 ```
 
 Public JSON schemas live in `schemas/*.schema.json`. These schemas are intentionally permissive for additive fields but strict about the stable contract keys used by downstream tools.

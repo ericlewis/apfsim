@@ -114,6 +114,13 @@ This is the first layer of the porting-intelligence workflow. The goal is for to
 
 Agents implementing full-auto bring-up should use [Full-Auto Agent Guide](docs/full-auto-agent-guide.md). It maps the stable artifact fields for video shape, first protocol failure windows, control-plane probes, input smoke, audio activity, data loading, package validation, and shim provenance.
 
+Package and summary gates:
+
+```sh
+bin/apfsim package-check --root /path/to/core-or-package --json-out output/package_check.json --strict
+bin/apfsim summarize-run output/bringup/core-name/run --json-out output/summary.json --tsv-out output/summary.tsv --strict
+```
+
 ### Bring Up A Core
 
 `bringup` is the high-level command intended to grow into discover, profile generation, simulation, diagnosis, repair planning, and rerun:
@@ -232,6 +239,8 @@ A run writes a stable artifact directory. Important files:
 - `diagnostics.json`: stable APF contract diagnostics with evidence and repair suggestions.
 - `bringup-report.md`: human-readable bring-up summary.
 - `repair-plan.json`: optional reviewable repair suggestions from `bringup --repair`.
+- `package_check.json`: package metadata and SD-card path validation.
+- `summary.json` / `summary.tsv`: normalized one-row output for corpus and generator consumption.
 - `video_shape.json`: APF-facing runtime video contract.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers.
 - `bridge.log`: human-readable APF command and data-slot flow.

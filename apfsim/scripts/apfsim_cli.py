@@ -17,7 +17,9 @@ from artifact_validator import ArtifactValidationError, annotate_result_phases, 
 from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
 from diagnostics import write_diagnostics
 from log_analyzer import analyze_logs, write_json_report
+from package_validator import write_package_check
 from profile_generator import generate_profile_candidate
+from run_summary import write_summary
 
 APFSIM_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = APFSIM_DIR / "profiles"
@@ -830,13 +832,24 @@ def cmd_bringup(args: argparse.Namespace) -> int:
     run_args.slot = slots
     run_args.artifacts = str(args.artifacts or (out / "run"))
     run_args.clean_artifacts = args.clean_artifacts
+    artifact_root = resolve_path(run_args.artifacts, profile)
+    package_path = artifact_root / "package_check.json"
+    package_root = resolve_user_path(args.root) if args.root else profile.root
+    if package_root:
+        try:
+            write_package_check(package_root, package_path, expected_platform_id=args.expected_platform_id)
+        except Exception as exc:
+            eprint(f"apfsim package-check warning: {exc}")
     rc = run_profile(run_args, profile)
 
-    artifact_root = resolve_path(run_args.artifacts, profile)
     diagnostics_path = artifact_root / "diagnostics.json"
     diagnostics_doc = load_json(diagnostics_path) if diagnostics_path.exists() else {}
     if args.repair or args.emit_patches:
         write_repair_plan(artifact_root, diagnostics_doc, emit_patches=args.emit_patches)
+    summary_doc = write_summary(
+        artifact_root,
+        package_check_path=package_path if package_path.exists() else None,
+    )
 
     first_error = first_diagnostic_code(diagnostics_doc, severity="error")
     if rc != 0 or first_error:
@@ -844,9 +857,52 @@ def cmd_bringup(args: argparse.Namespace) -> int:
     else:
         print("PASS bringup")
     print(f"artifacts: {artifact_root}")
+    print(f"summary: {artifact_root / 'summary.json'}")
     if generated_payload:
         print(f"generated profile: {generated_payload['paths']['profile']}")
-    return rc if rc != 0 else (1 if first_error else 0)
+    return rc if rc != 0 else (1 if first_error or summary_doc.get("ok") is False else 0)
+
+
+def cmd_package_check(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.json_out) if args.json_out else APFSIM_DIR / "output" / "package-check" / root.name / "package_check.json"
+    doc = write_package_check(root, output, expected_platform_id=args.expected_platform_id)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        print(
+            "package-check: "
+            f"ok={bool(doc.get('ok'))} "
+            f"errors={len(doc.get('package_errors', []))} "
+            f"warnings={len(doc.get('package_warnings', []))}"
+        )
+        print(f"json: {output}")
+        for item in doc.get("package_errors", []):
+            print(f"ERROR {item.get('code')}: {item.get('message')}")
+        for item in doc.get("package_warnings", []):
+            print(f"WARN {item.get('code')}: {item.get('message')}")
+    return 1 if args.strict and not doc.get("ok") else 0
+
+
+def cmd_summarize_run(args: argparse.Namespace) -> int:
+    artifact_dir = resolve_user_path(args.artifact_dir)
+    package_check_path = resolve_user_path(args.package_check) if args.package_check else None
+    json_out = resolve_user_path(args.json_out) if args.json_out else None
+    tsv_out = resolve_user_path(args.tsv_out) if args.tsv_out else None
+    doc = write_summary(artifact_dir, json_out=json_out, tsv_out=tsv_out, package_check_path=package_check_path)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        row = doc["row"]
+        print(
+            "summary: "
+            f"ok={row['ok']} "
+            f"first_error={row['first_error_code'] or 'none'} "
+            f"video={row['active_width']}x{row['active_height']} "
+            f"audio={row['audio_activity']} "
+            f"loaded_bytes={row['loaded_bytes_total']}"
+        )
+    return 1 if args.strict and not doc.get("ok") else 0
 
 
 def first_diagnostic_code(doc: dict[str, Any], *, severity: str) -> str:
@@ -1632,6 +1688,7 @@ def build_parser() -> argparse.ArgumentParser:
     bringup.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")
     bringup.add_argument("--rom", help="ROM/asset file to bind to --rom-slot-id")
     bringup.add_argument("--rom-slot-id", type=int, default=1, help="data slot id used for --rom; default 1")
+    bringup.add_argument("--expected-platform-id", help="fail package-check if core.json does not declare this platform id")
     bringup.add_argument("--out", required=True, help="bring-up artifact directory")
     bringup.add_argument("--repair", action="store_true", help="emit repair-plan.json from diagnostics")
     bringup.add_argument("--explain", action="store_true", help="reserved for verbose diagnostic explanations")
@@ -1675,6 +1732,25 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--video-json", help="optional APF video.json to compare frame dimensions against")
     validate.add_argument("--no-update", action="store_true", help="do not add derived phases/lifecycle to result.json or lifecycle.json")
     validate.set_defaults(func=cmd_validate_artifacts)
+
+    package = sub.add_parser("package-check", help="validate APF package metadata and SD-card path expectations")
+    package.add_argument("--root", required=True, help="core checkout or package root")
+    package.add_argument("--expected-platform-id", help="expected platform id that must be declared by core.json")
+    package.add_argument("--json-out", help="write package_check.json here; defaults to apfsim/output/package-check/<root>/package_check.json")
+    package.add_argument("--json", action="store_true", help="print package_check JSON")
+    package.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    package.add_argument("--strict", action="store_true", help="return nonzero when package errors are present")
+    package.set_defaults(func=cmd_package_check)
+
+    summarize = sub.add_parser("summarize-run", help="flatten run artifacts into summary.json and summary.tsv")
+    summarize.add_argument("artifact_dir", help="run artifact directory")
+    summarize.add_argument("--package-check", help="optional package_check.json path; defaults to artifact_dir/package_check.json")
+    summarize.add_argument("--json-out", help="write summary JSON here; defaults to artifact_dir/summary.json")
+    summarize.add_argument("--tsv-out", help="write one-row TSV here; defaults to artifact_dir/summary.tsv")
+    summarize.add_argument("--json", action="store_true", help="print summary JSON")
+    summarize.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    summarize.add_argument("--strict", action="store_true", help="return nonzero when summary ok=false")
+    summarize.set_defaults(func=cmd_summarize_run)
 
     diagnose = sub.add_parser("diagnose", help="classify run artifacts into stable APF contract diagnostics")
     diagnose.add_argument("artifact_dir", help="directory containing result.json and run artifacts")

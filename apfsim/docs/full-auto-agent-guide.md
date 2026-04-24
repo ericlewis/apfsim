@@ -46,6 +46,26 @@ Existing run diagnosis:
 bin/apfsim diagnose output/bringup/core-name/run --profile profile.json --strict --json --pretty
 ```
 
+Package validation:
+
+```sh
+bin/apfsim package-check \
+  --root /path/to/openFPGA-Core-or-SD-package \
+  --expected-platform-id arcade-platform \
+  --json-out output/package_check.json \
+  --strict
+```
+
+Normalized one-row summary:
+
+```sh
+bin/apfsim summarize-run \
+  output/bringup/core-name/run \
+  --json-out output/summary.json \
+  --tsv-out output/summary.tsv \
+  --strict
+```
+
 Video shape loop:
 
 ```sh
@@ -64,6 +84,8 @@ Read these first:
 - `video_shape.json`: APF-facing runtime video contract.
 - `bridge_summary.json`: bridge counters and command transcript.
 - `source_provenance.json`: sim-only shims/generated files/provenance.
+- `package_check.json`: APF metadata and SD-card path validation.
+- `summary.json` / `summary.tsv`: normalized one-row output for corpus/coreir consumption.
 - `repair-plan.json`: optional repair suggestions from `bringup --repair`.
 
 ## Observable Field Map
@@ -76,7 +98,7 @@ Read these first:
 | Input injection smoke | Prove scripted gamepad bits are driven into APF controller pins. | `result.input.input_trace`, `result.input.input_effect_seen`, top-level `result.input_trace`, top-level `result.input_effect_seen` |
 | Audio activity report | Distinguish no clock, no LRCK, silence, stuck sample, and active waveform. | `result.audio.activity`, `result.audio.nonzero_samples`, `result.audio.peak`, `result.audio.mclk_seen`, `result.audio.lrclk_seen`, `audio/stats.json` |
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, or checksum before SD copy. | `result.data_load.slots[]`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `done_seen`, `bridge_summary.slot_table_ok` |
-| Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | Future: `package_errors[]`, `sd_paths[]`; for now use profile preflight plus docs in `public-readiness.md` |
+| Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
 | Shim/source provenance | Make sim-only VHDL or primitive shims visible in pass results. | `source_provenance.shimmed_modules[]`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
 
 ## Per-Core Row Normalization
@@ -101,6 +123,8 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `data_crc_list`
 - `shimmed_modules`
 - `artifact_dir`
+
+`bin/apfsim summarize-run` emits this row today as `summary.json.row` and `summary.tsv`. `bringup` writes both automatically after package-check, run, diagnose, and optional repair-plan.
 
 The first blocking diagnostic should determine the immediate next action. Do not treat `boot reached running` as a pass if video/audio/data/package gates fail.
 
@@ -129,7 +153,7 @@ Only emit a copy-to-SD checklist when all are true:
 - saves passed or are not declared;
 - package validation passed.
 
-Until package validation exists in-tree, mark hardware queue status as `blocked_package_validator_missing` rather than pretending it passed.
+If package validation is not run, mark hardware queue status as `blocked_package_validator_missing` rather than pretending it passed. `bringup` runs package validation automatically when `--root` is supplied or when the profile has a resolved external root.
 
 ## Regression Promotion Rule
 
