@@ -71,6 +71,8 @@ class GeneratedProfile:
     notes_path: Path
     report_path: Path
     selected_shims: list[str] = field(default_factory=list)
+    selected_shim_details: list[dict[str, Any]] = field(default_factory=list)
+    risks: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     profile: dict[str, Any] = field(default_factory=dict)
     qsf: dict[str, Any] | None = None
@@ -177,6 +179,7 @@ def generate_profile_candidate(
         "action": inv.action,
         "selected_shims": selected_shims,
         "selected_shim_details": selected_shim_details,
+        "risks": risks,
         "paths": {
             "profile": str(profile_path),
             "filelist": str(filelist_path),
@@ -199,6 +202,8 @@ def generate_profile_candidate(
         notes_path=notes_path,
         report_path=report_path,
         selected_shims=selected_shims,
+        selected_shim_details=selected_shim_details,
+        risks=risks,
         warnings=warnings,
         profile=profile,
         qsf=qsf_payload,

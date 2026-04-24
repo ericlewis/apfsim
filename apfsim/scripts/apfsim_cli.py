@@ -1660,6 +1660,8 @@ def cmd_generate_profile(args: argparse.Namespace) -> int:
             "report": str(generated.report_path),
         },
         "selected_shims": generated.selected_shims,
+        "selected_shim_details": generated.selected_shim_details,
+        "risks": generated.risks,
         "warnings": generated.warnings,
     }
     if generated.qsf:
