@@ -4,7 +4,8 @@ TOP ?= core_top
 FILELIST ?= examples/mock/filelist.f
 MDIR ?= build/obj
 VERILATOR ?= verilator
-PYTHON ?= $(if $(wildcard ../.venv/bin/python),../.venv/bin/python,python3)
+UV ?= uv
+PYTEST ?= $(UV) run pytest
 APFSIM ?= bin/apfsim
 FRAMES ?= 5
 PROFILE ?= mock
@@ -86,7 +87,7 @@ profile-play:
 	$(APFSIM) play --profile $(PROFILE)
 
 test:
-	$(PYTHON) -m pytest -q tests
+	$(PYTEST) -q tests
 
 test-matrix:
 	$(APFSIM) test --matrix $(MATRIX)

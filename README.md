@@ -7,7 +7,7 @@ Start with:
 ```sh
 make doctor
 make profile-run PROFILE=mock FRAMES=2
-make test
+make test          # uses uv run pytest
 ```
 
 See [`apfsim/README.md`](apfsim/README.md) for build and real-core usage.

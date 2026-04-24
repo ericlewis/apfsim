@@ -300,10 +300,11 @@ make -C apfsim test
 make -C apfsim test-matrix MATRIX=local-fast
 ```
 
-`make test` expects `pytest`. Install local test dependencies with:
+`make test` uses `uv run pytest`, so Python test dependencies are resolved from the root `pyproject.toml` without requiring global installs.
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r apfsim/requirements-dev.txt
+uv run pytest -q apfsim/tests
+make -C apfsim test
 ```
+
+If `uv` is unavailable, install it from https://docs.astral.sh/uv/ or use a local virtual environment with `apfsim/requirements-dev.txt`.
