@@ -9,6 +9,7 @@ module apfsim_async_sram_16_model #(
     parameter [15:0] INIT_VALUE = 16'h0000
 ) (
     input  wire                  clk,
+    input  wire                  reset,
     input  wire                  ce_n,
     input  wire                  oe_n,
     input  wire                  we_n,
@@ -44,7 +45,12 @@ module apfsim_async_sram_16_model #(
     end
 
     always @(posedge clk) begin
-        if (!ce_n) begin
+        if (reset) begin
+            read_count <= 32'd0;
+            write_count <= 32'd0;
+            bus_contention_error <= 1'b0;
+            byte_enable_error <= 1'b0;
+        end else if (!ce_n) begin
             if (!oe_n && !we_n) bus_contention_error <= 1'b1;
             if (!we_n) begin
                 if (lb_n && ub_n) byte_enable_error <= 1'b1;
@@ -160,27 +166,29 @@ endmodule
 
 module apfsim_psram_like_model #(
     parameter integer ADDR_WIDTH = 24,
+    parameter integer DATA_WIDTH = 16,
+    parameter integer BYTE_ENABLE_WIDTH = DATA_WIDTH / 8,
     parameter integer LATENCY_CYCLES = 6
 ) (
-    input  wire                  clk,
-    input  wire                  reset,
-    input  wire                  req,
-    input  wire                  we,
-    input  wire [ADDR_WIDTH-1:0] addr,
-    input  wire [15:0]           din,
-    input  wire [1:0]            byteena,
-    output wire [15:0]           dout,
-    output wire                  ack,
-    output wire                  busy,
-    output wire [31:0]           read_count,
-    output wire [31:0]           write_count,
-    output wire                  overrun_error,
-    output wire                  byte_enable_error
+    input  wire                         clk,
+    input  wire                         reset,
+    input  wire                         req,
+    input  wire                         we,
+    input  wire [ADDR_WIDTH-1:0]        addr,
+    input  wire [DATA_WIDTH-1:0]        din,
+    input  wire [BYTE_ENABLE_WIDTH-1:0] byteena,
+    output wire [DATA_WIDTH-1:0]        dout,
+    output wire                         ack,
+    output wire                         busy,
+    output wire [31:0]                  read_count,
+    output wire [31:0]                  write_count,
+    output wire                         overrun_error,
+    output wire                         byte_enable_error
 );
     apfsim_transactional_ram_model #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(16),
-        .BYTE_ENABLE_WIDTH(2),
+        .DATA_WIDTH(DATA_WIDTH),
+        .BYTE_ENABLE_WIDTH(BYTE_ENABLE_WIDTH),
         .LATENCY_CYCLES(LATENCY_CYCLES)
     ) ram (
         .clk(clk),
@@ -202,27 +210,29 @@ endmodule
 
 module apfsim_cram_like_model #(
     parameter integer ADDR_WIDTH = 21,
+    parameter integer DATA_WIDTH = 16,
+    parameter integer BYTE_ENABLE_WIDTH = DATA_WIDTH / 8,
     parameter integer LATENCY_CYCLES = 4
 ) (
-    input  wire                  clk,
-    input  wire                  reset,
-    input  wire                  req,
-    input  wire                  we,
-    input  wire [ADDR_WIDTH-1:0] addr,
-    input  wire [15:0]           din,
-    input  wire [1:0]            byteena,
-    output wire [15:0]           dout,
-    output wire                  ack,
-    output wire                  busy,
-    output wire [31:0]           read_count,
-    output wire [31:0]           write_count,
-    output wire                  overrun_error,
-    output wire                  byte_enable_error
+    input  wire                         clk,
+    input  wire                         reset,
+    input  wire                         req,
+    input  wire                         we,
+    input  wire [ADDR_WIDTH-1:0]        addr,
+    input  wire [DATA_WIDTH-1:0]        din,
+    input  wire [BYTE_ENABLE_WIDTH-1:0] byteena,
+    output wire [DATA_WIDTH-1:0]        dout,
+    output wire                         ack,
+    output wire                         busy,
+    output wire [31:0]                  read_count,
+    output wire [31:0]                  write_count,
+    output wire                         overrun_error,
+    output wire                         byte_enable_error
 );
     apfsim_transactional_ram_model #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(16),
-        .BYTE_ENABLE_WIDTH(2),
+        .DATA_WIDTH(DATA_WIDTH),
+        .BYTE_ENABLE_WIDTH(BYTE_ENABLE_WIDTH),
         .LATENCY_CYCLES(LATENCY_CYCLES)
     ) ram (
         .clk(clk),

@@ -17,6 +17,13 @@ CLASS_COUNTERS = {
     "psram": ["psram_read_count", "psram_write_count", "psram_overrun_error", "psram_byte_enable_error"],
     "cram": ["cram_read_count", "cram_write_count", "cram_overrun_error", "cram_byte_enable_error"],
 }
+CLASS_DEFAULTS = {
+    # Pocket exposes the fast SRAM as 128K x 16. Keep the generated scaffold small
+    # enough to lint quickly while still matching the external bus shape.
+    "sram": {"addr_width": 17, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 0},
+    "psram": {"addr_width": 24, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 6},
+    "cram": {"addr_width": 21, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 4},
+}
 
 
 def memory_wrapper_plan(memory: dict[str, Any] | None, *, path: str = "{profile_dir}/apfsim_memory_models.sv") -> dict[str, Any]:
@@ -35,6 +42,7 @@ def memory_wrapper_plan(memory: dict[str, Any] | None, *, path: str = "{profile_
         "classes": classes,
         "modules": modules,
         "activity_counters": counters,
+        "model_defaults": {cls: CLASS_DEFAULTS[cls] for cls in classes},
         "wire_required": bool(classes),
         "confidence": "scaffold_only" if classes else "not_required",
         "notes": (
@@ -59,23 +67,26 @@ def render_memory_wrapper_sv(
     blocks: list[str] = []
 
     if "sram" in classes:
+        defaults = CLASS_DEFAULTS["sram"]
+        addr_width = int(defaults["addr_width"])
+        data_width = int(defaults["data_width"])
         ports.extend([
             "    input  wire        sram_ce_n",
             "    input  wire        sram_oe_n",
             "    input  wire        sram_we_n",
             "    input  wire        sram_lb_n",
             "    input  wire        sram_ub_n",
-            "    input  wire [23:0] sram_addr",
-            "    inout  wire [15:0] sram_dq",
+            f"    input  wire [{addr_width - 1}:0] sram_addr",
+            f"    inout  wire [{data_width - 1}:0] sram_dq",
             "    output wire [31:0] sram_read_count",
             "    output wire [31:0] sram_write_count",
             "    output wire        sram_bus_contention_error",
             "    output wire        sram_byte_enable_error",
         ])
         blocks.append(
-            """
+            f"""
     apfsim_async_sram_16_model #(
-        .ADDR_WIDTH(24)
+        .ADDR_WIDTH({addr_width})
     ) sram_model (
         .clk(clk),
         .reset(reset),
@@ -95,12 +106,14 @@ def render_memory_wrapper_sv(
         )
 
     if "psram" in classes:
-        ports.extend(transactional_ports("psram"))
-        blocks.append(transactional_instance("psram", "apfsim_psram_like_model"))
+        defaults = CLASS_DEFAULTS["psram"]
+        ports.extend(transactional_ports("psram", defaults))
+        blocks.append(transactional_instance("psram", "apfsim_psram_like_model", defaults))
 
     if "cram" in classes:
-        ports.extend(transactional_ports("cram"))
-        blocks.append(transactional_instance("cram", "apfsim_cram_like_model"))
+        defaults = CLASS_DEFAULTS["cram"]
+        ports.extend(transactional_ports("cram", defaults))
+        blocks.append(transactional_instance("cram", "apfsim_cram_like_model", defaults))
 
     if not classes:
         blocks.append("    // No external RAM model was selected for this generated profile.")
@@ -122,14 +135,17 @@ endmodule
 """
 
 
-def transactional_ports(prefix: str) -> list[str]:
+def transactional_ports(prefix: str, defaults: dict[str, int]) -> list[str]:
+    addr_width = int(defaults["addr_width"])
+    data_width = int(defaults["data_width"])
+    byte_enable_width = int(defaults["byte_enable_width"])
     return [
         f"    input  wire        {prefix}_req",
         f"    input  wire        {prefix}_we",
-        f"    input  wire [23:0] {prefix}_addr",
-        f"    input  wire [15:0] {prefix}_din",
-        f"    input  wire [1:0]  {prefix}_byteena",
-        f"    output wire [15:0] {prefix}_dout",
+        f"    input  wire [{addr_width - 1}:0] {prefix}_addr",
+        f"    input  wire [{data_width - 1}:0] {prefix}_din",
+        f"    input  wire [{byte_enable_width - 1}:0]  {prefix}_byteena",
+        f"    output wire [{data_width - 1}:0] {prefix}_dout",
         f"    output wire        {prefix}_ack",
         f"    output wire        {prefix}_busy",
         f"    output wire [31:0] {prefix}_read_count",
@@ -139,11 +155,17 @@ def transactional_ports(prefix: str) -> list[str]:
     ]
 
 
-def transactional_instance(prefix: str, module: str) -> str:
+def transactional_instance(prefix: str, module: str, defaults: dict[str, int]) -> str:
+    addr_width = int(defaults["addr_width"])
+    data_width = int(defaults["data_width"])
+    byte_enable_width = int(defaults["byte_enable_width"])
+    latency_cycles = int(defaults["latency_cycles"])
     return f"""
     {module} #(
-        .ADDR_WIDTH(24),
-        .DATA_WIDTH(16)
+        .ADDR_WIDTH({addr_width}),
+        .DATA_WIDTH({data_width}),
+        .BYTE_ENABLE_WIDTH({byte_enable_width}),
+        .LATENCY_CYCLES({latency_cycles})
     ) {prefix}_model (
         .clk(clk),
         .reset(reset),

@@ -49,6 +49,8 @@ Every diagnosed run also writes `memory_activity.json`:
 - `models`: selected model names and confidence.
 - `selected_shims`: catalog entries that contributed memory models.
 - `wrapper_generation`: generated scaffold path/classes/modules.
+- `declared_counters`: public counter names declared by the generated scaffold.
+- `counter_status`: `declared_not_observed`, `observed`, or `none`.
 - `errors`: profile-level memory errors surfaced before live counters exist.
 - `notes`: whether this is provenance-only or live counter data.
 
@@ -137,7 +139,12 @@ The generated profile records it under:
     "memory_models": {
       "generated": true,
       "path": "{profile_dir}/apfsim_memory_models.sv",
-      "classes": ["sram", "cram"],
+      "classes": ["sram", "psram", "cram"],
+      "model_defaults": {
+        "sram": {"addr_width": 17, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 0},
+        "psram": {"addr_width": 24, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 6},
+        "cram": {"addr_width": 21, "data_width": 16, "byte_enable_width": 2, "latency_cycles": 4}
+      },
       "wire_required": true,
       "confidence": "scaffold_only"
     }
@@ -146,6 +153,23 @@ The generated profile records it under:
 ```
 
 This file is not a silent source patch. It is a wrapper scaffold that a generator or human must wire to the core's external RAM pins/transactions. Until that wiring exists, `memory_activity.json.observed` remains `false`.
+
+The generated helper is expected to lint with the public model library:
+
+```sh
+verilator --lint-only \
+  -Wno-DECLFILENAME \
+  apfsim/rtl_shims/external_memory_models.sv \
+  generated-profile/<name>/apfsim_memory_models.sv
+```
+
+Current scaffold defaults:
+
+| Class | Address Width | Data Width | Latency | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `sram` | 17 | 16 | async pin bus | 128Kx16-style SRAM pins with `CE/OE/WE/LB/UB`. |
+| `psram` | 24 | 16 | 6 cycles | Transactional request/ack bring-up model. |
+| `cram` | 21 | 16 | 4 cycles | Transactional request/ack bring-up model. |
 
 Future external RAM work should add model families with explicit confidence levels:
 

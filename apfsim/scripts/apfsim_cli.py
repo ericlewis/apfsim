@@ -720,6 +720,15 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
             "dest": str(resolve_path(item["dest"], profile)) if item.get("dest") else "",
             "catalog_entry": item.get("catalog_entry", ""),
         })
+    generated_file_provenance = []
+    for item in profile.raw.get("generated_file_provenance", []):
+        if not isinstance(item, dict):
+            continue
+        record = dict(item)
+        for key in ("path", "source", "dest"):
+            if record.get(key):
+                record[key] = expand_profile_text(str(record[key]), profile)
+        generated_file_provenance.append(record)
     memory_dependencies = profile.raw.get("memory") if isinstance(profile.raw.get("memory"), dict) else {}
     memory_models = []
     for cls, model in dict(memory_dependencies.get("models", {})).items():
@@ -732,6 +741,16 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
             "source": str(model.get("source", "")),
             "notes": str(model.get("notes", "")),
         })
+    explicit_sim_only_paths = [
+        expand_profile_text(str(path), profile)
+        for path in profile.raw.get("sim_only_paths", [])
+        if isinstance(path, str) and path
+    ]
+    heuristic_sim_only_paths = [
+        expand_profile_text(path, profile)
+        for path in profile.raw.get("required_paths", [])
+        if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)
+    ]
     doc = {
         "schema": "apfsim.source_provenance.v1",
         "profile": profile.name,
@@ -741,13 +760,11 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
         "filelist": str(profile.filelist),
         "shimmed_modules": shimmed_modules,
         "generated_files": generated_files,
+        "generated_file_provenance": generated_file_provenance,
         "memory_dependencies": memory_dependencies,
         "memory_models": memory_models,
         "wrapper_generation": profile.raw.get("wrapper_generation", {}),
-        "sim_only_paths": [
-            path for path in profile.raw.get("required_paths", [])
-            if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)
-        ],
+        "sim_only_paths": dedupe_strings(explicit_sim_only_paths + heuristic_sim_only_paths),
     }
     artifact_root.mkdir(parents=True, exist_ok=True)
     (artifact_root / "source_provenance.json").write_text(json.dumps(doc, indent=2) + "\n")
@@ -783,6 +800,7 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
             "observed": False,
         })
     classes = [str(item) for item in memory_dependencies.get("classes", [])]
+    declared_counters = [str(item) for item in memory_wrapper.get("activity_counters", [])]
     doc = {
         "schema": "apfsim.memory_activity.v1",
         "profile": profile.name,
@@ -792,6 +810,8 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
         "models": provenance.get("memory_models", []),
         "selected_shims": memory_shims,
         "wrapper_generation": memory_wrapper,
+        "declared_counters": declared_counters,
+        "counter_status": "declared_not_observed" if declared_counters else "none",
         "counters": [],
         "errors": errors,
         "notes": [

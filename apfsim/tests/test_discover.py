@@ -1,6 +1,9 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,7 +123,9 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     (rtl_dir / "memory_glue.sv").write_text(
         "module memory_glue;"
         " sdram sdram_inst();"
+        " psram psram_inst();"
         " wire [15:0] SRAM_DQ;"
+        " wire [15:0] PSRAM_DQ;"
         " wire CRAM_WAIT;"
         " altsyncram bram_inst();"
         " dcfifo fifo_inst();"
@@ -142,8 +147,8 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     profile = json.loads(Path(report["paths"]["profile"]).read_text())
     filelist = Path(report["paths"]["filelist"]).read_text()
     assert candidate["memory"]["schema"] == "apfsim.memory_dependencies.v1"
-    assert set(candidate["memory"]["classes"]) >= {"sdram", "sram", "cram", "bram", "fifo"}
-    assert set(candidate["memory"]["external_classes"]) >= {"sdram", "sram", "cram"}
+    assert set(candidate["memory"]["classes"]) >= {"sdram", "sram", "psram", "cram", "bram", "fifo"}
+    assert set(candidate["memory"]["external_classes"]) >= {"sdram", "sram", "psram", "cram"}
     assert "CRAM_MODEL_REQUIRED" in {risk["code"] for risk in candidate["memory"]["risks"]}
     assert "external_sram_pin_model" in candidate["selected_shims"]
     assert "psram_cram_transactional_models" in candidate["selected_shims"]
@@ -160,8 +165,60 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     assert profile["memory"]["models"]["sdram"]["selected"] == "ideal_transactional"
     assert "external_sram_pin_model" in profile["shim_catalog"]
     assert profile["wrapper_generation"]["memory_models"]["generated"] is True
-    assert set(profile["wrapper_generation"]["memory_models"]["classes"]) == {"sram", "cram"}
+    assert set(profile["wrapper_generation"]["memory_models"]["classes"]) == {"sram", "psram", "cram"}
+    assert profile["wrapper_generation"]["memory_models"]["model_defaults"]["sram"]["addr_width"] == 17
+    wrapper_text = (Path(report["paths"]["profile"]).parent / "apfsim_memory_models.sv").read_text()
+    assert "input  wire [16:0] sram_addr" in wrapper_text
+    assert ".ADDR_WIDTH(17)" in wrapper_text
+    assert ".BYTE_ENABLE_WIDTH(2)" in wrapper_text
+    assert ".LATENCY_CYCLES(6)" in wrapper_text
+    assert ".LATENCY_CYCLES(4)" in wrapper_text
     assert any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
+
+
+def test_generated_external_memory_scaffold_lints_when_verilator_available(tmp_path):
+    if shutil.which("verilator") is None:
+        pytest.skip("verilator is not installed")
+    core = tmp_path / "openFPGA-MemoryCore"
+    write_fake_core(core, name="MemoryCore")
+    rtl_dir = core / "src" / "fpga" / "core"
+    (rtl_dir / "memory_glue.sv").write_text(
+        "module memory_glue;"
+        " psram psram_inst();"
+        " wire [15:0] SRAM_DQ;"
+        " wire [15:0] PSRAM_DQ;"
+        " wire CRAM_WAIT;"
+        "endmodule\n"
+    )
+    out = tmp_path / "generated"
+
+    r = subprocess.run([
+        str(CLI),
+        "generate-profile",
+        "--root", str(core),
+        "--output", str(out),
+        "--json",
+    ], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    report = json.loads(r.stdout)
+    wrapper = Path(report["paths"]["profile"]).parent / "apfsim_memory_models.sv"
+    top_module = next(
+        line.split()[1]
+        for line in wrapper.read_text().splitlines()
+        if line.startswith("module ")
+    )
+    r = subprocess.run([
+        "verilator",
+        "--lint-only",
+        "-Wno-fatal",
+        "-Wno-DECLFILENAME",
+        "-Wno-UNUSEDSIGNAL",
+        "--top-module", top_module,
+        str(ROOT / "rtl_shims" / "external_memory_models.sv"),
+        str(wrapper),
+    ], cwd=ROOT, text=True, capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
