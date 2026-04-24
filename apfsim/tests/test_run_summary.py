@@ -50,7 +50,12 @@ def make_artifacts(root: Path):
     })
     write_json(root / "source_provenance.json", {
         "schema": "apfsim.source_provenance.v1",
-        "shimmed_modules": [{"name": "altsyncram_sim"}],
+        "shimmed_modules": [{
+            "name": "intel_bram_shims",
+            "kind": "behavioral_model",
+            "confidence": "sim_only",
+            "modules": ["altsyncram"],
+        }],
         "memory_dependencies": {
             "schema": "apfsim.memory_dependencies.v1",
             "required": True,
@@ -81,10 +86,13 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["frames_considered"] == 3
     assert row["audio_activity"] == "active"
     assert row["data_crc_list"] == ["0x12345678"]
-    assert row["shimmed_modules"] == ["altsyncram_sim"]
+    assert row["shimmed_modules"] == ["intel_bram_shims"]
+    assert row["shim_kinds"] == ["intel_bram_shims:behavioral_model"]
+    assert row["shim_confidences"] == ["intel_bram_shims:sim_only"]
     assert row["memory_classes"] == ["sdram", "bram"]
     assert row["memory_models"] == ["sdram:ideal_transactional"]
     assert row["memory_risks"] == ["SDRAM_TIMING_NOT_POCKET_LIKE"]
+    assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
 
 
 def test_write_summary_emits_json_and_tsv(tmp_path):

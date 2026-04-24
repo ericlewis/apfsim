@@ -146,6 +146,8 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `loaded_bytes_total`
 - `data_crc_list`
 - `shimmed_modules`
+- `shim_kinds`
+- `shim_confidences`
 - `memory_classes`
 - `memory_models`
 - `memory_risks`

@@ -54,6 +54,8 @@
           "first_error_code": {"type": "string"},
           "blocking_codes": {"type": "array", "items": {"type": "string"}},
           "warning_codes": {"type": "array", "items": {"type": "string"}},
+          "shim_kinds": {"type": "array", "items": {"type": "string"}},
+          "shim_confidences": {"type": "array", "items": {"type": "string"}},
           "memory_classes": {"type": "array", "items": {"type": "string"}},
           "memory_models": {"type": "array", "items": {"type": "string"}},
           "memory_risks": {"type": "array", "items": {"type": "string"}},

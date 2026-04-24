@@ -55,6 +55,8 @@ if cmd == 'bringup':
         'loaded_bytes_total': 1024,
         'data_crc_list': ['0x12345678'],
         'shimmed_modules': ['mf_pllbase_sim'],
+        'shim_kinds': ['intel_pllbase_sim:compile_shim'],
+        'shim_confidences': ['intel_pllbase_sim:deterministic_clock'],
         'memory_classes': ['sdram'],
         'memory_models': ['sdram:ideal_transactional'],
         'memory_risks': ['SDRAM_TIMING_NOT_POCKET_LIKE'],
@@ -121,6 +123,7 @@ def test_corpus_manifest_runner_aggregates_pass_fail_skip_and_preflight(tmp_path
     assert rows["missing-root"]["skip_reason"] == "root_missing"
     assert rows["missing-rom"]["first_error_code"] == "ROM_MISSING"
     assert rows["with-rom"]["loaded_bytes_total"] == 1024
+    assert rows["with-rom"]["shim_confidences"] == ["intel_pllbase_sim:deterministic_clock"]
     assert rows["with-rom"]["memory_classes"] == ["sdram"]
     blockers = {item["code"]: item["count"] for item in doc["top_blockers"]}
     assert blockers["VIDEO_WIDTH_MISMATCH"] == 1
@@ -128,6 +131,7 @@ def test_corpus_manifest_runner_aggregates_pass_fail_skip_and_preflight(tmp_path
     assert (tmp_path / "out" / "corpus_summary.json").exists()
     tsv = (tmp_path / "out" / "corpus_summary.tsv").read_text()
     assert "pass-core" in tsv
+    assert "intel_pllbase_sim:deterministic_clock" in tsv
     assert "sdram:ideal_transactional" in tsv
 
 
