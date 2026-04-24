@@ -1,0 +1,63 @@
+name: mock_port_gate_strict
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+interact:
+  writes:
+    - frame: boot
+      address: 0x50000010
+      value: 1
+inputs:
+  - frame: 2
+    player: 1
+    button: Select
+    hold_frames: 1
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 1
+run:
+  until_frames: 4
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224
+    min_frames: 4
+    max_errors: 0
+    require_rgb_zero_when_de_low: true
+    require_single_cycle_sync: true
+    require_skip_only_during_de: true
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
+  audio:
+    min_samples: 64
+    require_changing: true
+    min_peak_to_peak: 32
+    max_clipped_samples: 0
+  data:
+    require_required_slots: true
+    require_all_file_slots_loaded: true
+    expected_total_loaded_bytes: 1024
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true
+    max_setup_cycles: 2000
+    max_boot_cycles: 200000
+    max_reset_exit_to_running_cycles: 2000
+  interact:
+    min_persistent_writes: 1
+  input:
+    require_scripted_activity: true
+  bridge:
+    readbacks:
+      - name: mock_rom_write_count
+        address: 0x50000020
+        value: 1024
+        mask: 0xffffffff

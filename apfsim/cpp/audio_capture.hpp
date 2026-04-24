@@ -23,6 +23,8 @@ struct AudioStats {
     int16_t max_l = 0;
     int16_t min_r = 0;
     int16_t max_r = 0;
+    int32_t peak_to_peak_l = 0;
+    int32_t peak_to_peak_r = 0;
     double dc_offset_l = 0.0;
     double dc_offset_r = 0.0;
     size_t clipped_samples = 0;
@@ -107,6 +109,8 @@ private:
         }
         s.dc_offset_l = static_cast<double>(sum_l) / static_cast<double>(samples_.size());
         s.dc_offset_r = static_cast<double>(sum_r) / static_cast<double>(samples_.size());
+        s.peak_to_peak_l = static_cast<int32_t>(s.max_l) - static_cast<int32_t>(s.min_l);
+        s.peak_to_peak_r = static_cast<int32_t>(s.max_r) - static_cast<int32_t>(s.min_r);
         return s;
     }
 
@@ -156,6 +160,8 @@ private:
         out << "  \"max_l\": " << stats_.max_l << ",\n";
         out << "  \"min_r\": " << stats_.min_r << ",\n";
         out << "  \"max_r\": " << stats_.max_r << ",\n";
+        out << "  \"peak_to_peak_l\": " << stats_.peak_to_peak_l << ",\n";
+        out << "  \"peak_to_peak_r\": " << stats_.peak_to_peak_r << ",\n";
         out << "  \"dc_offset_l\": " << stats_.dc_offset_l << ",\n";
         out << "  \"dc_offset_r\": " << stats_.dc_offset_r << ",\n";
         out << "  \"clipped_samples\": " << stats_.clipped_samples << "\n";

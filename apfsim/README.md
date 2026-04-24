@@ -72,6 +72,7 @@ Available profile manifests live in `profiles/*.json`:
 | Profile | Purpose |
 | --- | --- |
 | `mock` | Built-in deterministic APF `core_top`. |
+| `mock_port_gate` | Strict built-in correctness gate for APF-facing timing, data, reset, audio, input, interact, and readback checks. |
 | `core_template` | Local agg23 APF core template checkout, skipped if absent. |
 | `basicassets` | Local official BasicAssets checkout with generated sim wrapper and SDRAM model. |
 | `pacman` | Local Pac-Man APF shell check using VHDL entity stubs. |
@@ -88,9 +89,48 @@ Matrix modes:
 
 | Matrix | Profiles |
 | --- | --- |
-| `ci` | `mock` only. |
-| `local-fast` | `mock` plus available core template. |
-| `local-real` | `mock`, core template, BasicAssets, and Pac-Man when their checkouts exist. |
+| `ci` | `mock_port_gate` only. |
+| `local-fast` | `mock_port_gate` plus available core template. |
+| `local-real` | `mock_port_gate`, core template, BasicAssets, and Pac-Man when their checkouts exist. |
+
+## Correctness Checks
+
+Scenarios can make port-validation strict under `expect:`. The built-in [port gate](scenarios/port_gate.yml) demonstrates the supported checks:
+
+```yaml
+expect:
+  video:
+    active_width: 256
+    active_height: 224
+    max_errors: 0
+    min_hs_after_vs_cycles: 3
+    min_hs_to_de_gap_cycles: 1
+    min_de_to_hs_gap_cycles: 1
+  audio:
+    min_samples: 64
+    require_changing: true
+    min_peak_to_peak: 32
+    max_clipped_samples: 0
+  data:
+    require_required_slots: true
+    expected_total_loaded_bytes: 1024
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true
+    max_boot_cycles: 200000
+  save:
+    require_nonvolatile_unload: true
+    require_roundtrip_match: true
+  bridge:
+    readbacks:
+      - name: rom_write_count
+        address: 0x50000020
+        value: 1024
+        mask: 0xffffffff
+```
+
+Each run writes the measured values to `result.json`. Failed gates return nonzero and include `failed_phase`, `message`, and a `failures` array, so profile runs can be used directly as CI checks.
 
 ## Build Targets
 

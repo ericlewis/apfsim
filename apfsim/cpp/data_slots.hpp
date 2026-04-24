@@ -22,7 +22,17 @@ struct DataSlot {
     size_t size_exact = 0;
     size_t size_maximum = 0;
     size_t loaded_size = 0;
+    uint64_t loaded_checksum = 0;
 };
+
+inline uint64_t fnv1a64(const std::vector<uint8_t>& bytes) {
+    uint64_t hash = 1469598103934665603ull;
+    for (const auto byte : bytes) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
 
 inline std::string json_string_field(const std::string& object, const std::string& key) {
     std::regex re("\\\"" + key + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");

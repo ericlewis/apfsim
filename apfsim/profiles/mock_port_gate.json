@@ -1,0 +1,28 @@
+{
+  "name": "mock_port_gate",
+  "description": "Strict built-in APF port-gate scenario covering video, audio, data, reset, interact, input, and bridge readback checks",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/port_gate.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "frames": 4,
+  "timeout_cycles": 5000000,
+  "build_dir": "build/profiles/mock_port_gate/obj",
+  "artifact_root": "build/profiles/mock_port_gate/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "examples/assets/mock.rom"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

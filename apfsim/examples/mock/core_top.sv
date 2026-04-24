@@ -189,7 +189,7 @@ module core_top (
     localparam [9:0] TOTAL_H = 10'd240;
     reg [9:0] px;
     reg [9:0] py;
-    wire active_next = (px >= 10'd4) && (px < (10'd4 + ACTIVE_W)) && (py < ACTIVE_H);
+    wire active_next = (px >= 10'd6) && (px < (10'd6 + ACTIVE_W)) && (py < ACTIVE_H);
 
     initial begin
         px = 10'd0;
@@ -198,7 +198,7 @@ module core_top (
 
     always @(posedge clk_74a) begin
         video_vs <= (px == 10'd0 && py == 10'd0);
-        video_hs <= (px == 10'd0);
+        video_hs <= (px == 10'd4);
         video_de <= active_next;
         video_skip <= 1'b0;
         if (active_next) begin

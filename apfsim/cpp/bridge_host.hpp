@@ -14,6 +14,28 @@
 
 namespace apfsim {
 
+struct SaveReport {
+    uint16_t id = 0;
+    size_t bytes = 0;
+    std::filesystem::path path;
+    bool matches_input = false;
+};
+
+struct BootTrace {
+    uint64_t start_cycle = 0;
+    uint64_t setup_cycle = 0;
+    uint64_t reset_enter_cycle = 0;
+    uint64_t slot_table_cycle = 0;
+    uint64_t data_load_complete_cycle = 0;
+    uint64_t data_all_complete_cycle = 0;
+    uint64_t rtc_cycle = 0;
+    uint64_t target_ready_cycle = 0;
+    uint64_t before_reset_exit_cycle = 0;
+    uint64_t reset_exit_cycle = 0;
+    uint64_t running_cycle = 0;
+    std::vector<std::string> events;
+};
+
 template <typename Top>
 class BridgeHost {
 public:
@@ -170,6 +192,7 @@ public:
             throw std::runtime_error("slot " + std::to_string(slot.id) + " exceeds maximum size");
         }
         slot.loaded_size = bytes.size();
+        slot.loaded_checksum = fnv1a64(bytes);
         log_event("DATASLOT load begin id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) +
                   " address=" + hex32(slot.address) + " file=" + slot.file.string());
         host_command(apf::kDataSlotRequestWrite, slot.id, static_cast<uint32_t>(bytes.size()), slot.address, 0);
@@ -178,17 +201,28 @@ public:
         std::cout << "PASS data: slot " << slot.id << " loaded " << bytes.size() << " bytes at " << hex32(slot.address) << "\n";
     }
 
-    void unload_nonvolatile(const std::vector<DataSlot>& slots, const std::filesystem::path& dir) {
-        if (dir.empty()) return;
+    std::vector<SaveReport> unload_nonvolatile(const std::vector<DataSlot>& slots, const std::filesystem::path& dir) {
+        std::vector<SaveReport> reports;
+        if (dir.empty()) return reports;
         std::filesystem::create_directories(dir);
         for (const auto& slot : slots) {
             if (!slot.nonvolatile || slot.loaded_size == 0) continue;
             const auto bytes = burst_read(slot.address, slot.loaded_size);
             const auto path = dir / ("slot_" + std::to_string(slot.id) + ".bin");
             write_binary_file(path, bytes);
+            SaveReport report;
+            report.id = slot.id;
+            report.bytes = bytes.size();
+            report.path = path;
+            if (!slot.file.empty()) {
+                const auto input = read_binary_file(slot.file);
+                report.matches_input = input == bytes;
+            }
+            reports.push_back(report);
             log_event("SAVE unload id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) + " path=" + path.string());
             std::cout << "PASS save: slot " << slot.id << " unloaded " << bytes.size() << " bytes\n";
         }
+        return reports;
     }
 
     void set_read_latency_cycles(uint64_t cycles) { read_latency_cycles_ = cycles; }
@@ -213,29 +247,58 @@ private:
 template <typename Top>
 class ApfHost {
 public:
-    explicit ApfHost(BridgeHost<Top>& bridge) : bridge_(bridge) {}
+    using NowFn = std::function<uint64_t()>;
+
+    explicit ApfHost(BridgeHost<Top>& bridge, NowFn now_fn = {}) : bridge_(bridge), now_fn_(std::move(now_fn)) {}
 
     void boot(std::vector<DataSlot>& slots, const std::function<void()>& before_reset_exit = {}) {
+        trace_ = {};
+        trace_.start_cycle = now();
+        trace_.events.push_back("boot_start");
         bridge_.idle_cycles(1024);
         bridge_.poll_status_until(apf::kStatusSetup);
+        trace_.setup_cycle = now();
+        trace_.events.push_back("status_setup");
         bridge_.host_command(apf::kResetEnter);
+        trace_.reset_enter_cycle = now();
+        trace_.events.push_back("reset_enter");
         for (auto& slot : slots) {
             if (!slot.file.empty() && !slot.deferload) {
                 slot.loaded_size = std::filesystem::file_size(slot.file);
             }
         }
         bridge_.populate_slot_table(slots);
+        trace_.slot_table_cycle = now();
+        trace_.events.push_back("slot_table_populated");
         for (auto& slot : slots) bridge_.load_slot(slot);
+        trace_.data_load_complete_cycle = now();
+        trace_.events.push_back("data_load_complete");
         bridge_.host_command(apf::kDataSlotAllComplete);
+        trace_.data_all_complete_cycle = now();
+        trace_.events.push_back("data_slot_all_complete");
         bridge_.host_command(apf::kRtcData, 0, 0, 0, 0);
+        trace_.rtc_cycle = now();
+        trace_.events.push_back("rtc_sent");
         bridge_.wait_target_ready_to_run();
+        trace_.target_ready_cycle = now();
+        trace_.events.push_back("target_ready_to_run");
         if (before_reset_exit) before_reset_exit();
+        trace_.before_reset_exit_cycle = now();
+        trace_.events.push_back("before_reset_exit");
         bridge_.host_command(apf::kResetExit);
+        trace_.reset_exit_cycle = now();
+        trace_.events.push_back("reset_exit");
         poll_running_or_idle_after_reset_exit();
+        trace_.running_cycle = now();
+        trace_.events.push_back("status_running");
         std::cout << "PASS boot: reached running\n";
     }
 
+    const BootTrace& trace() const { return trace_; }
+
 private:
+    uint64_t now() const { return now_fn_ ? now_fn_() : 0; }
+
     void poll_running_or_idle_after_reset_exit() {
         for (int i = 0; i < 5000; ++i) {
             const auto status = bridge_.request_status();
@@ -246,6 +309,8 @@ private:
     }
 
     BridgeHost<Top>& bridge_;
+    NowFn now_fn_;
+    BootTrace trace_;
 };
 
 } // namespace apfsim

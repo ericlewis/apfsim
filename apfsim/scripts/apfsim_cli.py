@@ -343,11 +343,11 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def matrix_profiles(name: str) -> list[str]:
     if name == "ci":
-        return ["mock"]
+        return ["mock_port_gate"]
     if name == "local-fast":
-        return ["mock", "core_template"]
+        return ["mock_port_gate", "core_template"]
     if name == "local-real":
-        return ["mock", "core_template", "basicassets", "pacman"]
+        return ["mock_port_gate", "core_template", "basicassets", "pacman"]
     raise ApfSimError(f"unknown matrix: {name}")
 
 

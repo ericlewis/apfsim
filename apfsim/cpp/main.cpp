@@ -16,10 +16,12 @@
 #endif
 
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -118,6 +120,22 @@ static void write_failure_result(const fs::path& path, const std::string& phase,
     out << "}\n";
 }
 
+struct ReadbackObservation {
+    BridgeReadbackExpect expect;
+    uint32_t observed = 0;
+    bool ok = false;
+};
+
+static std::string format_failure_summary(const Assertions& asserts) {
+    std::ostringstream ss;
+    const auto& failures = asserts.failures();
+    for (size_t i = 0; i < failures.size(); ++i) {
+        if (i) ss << "; ";
+        ss << failures[i];
+    }
+    return ss.str();
+}
+
 template <typename Bridge>
 static void write_result_json(
     const fs::path& path,
@@ -130,6 +148,11 @@ static void write_result_json(
     const AudioCapture& audio,
     const InputDriver& inputs,
     const Bridge& bridge,
+    const BootTrace& boot_trace,
+    const std::vector<SaveReport>& save_reports,
+    const std::vector<ReadbackObservation>& readbacks,
+    const std::vector<std::string>& failures,
+    size_t interact_writes,
     uint64_t cycles_74a) {
     if (path.empty()) return;
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
@@ -137,6 +160,7 @@ static void write_result_json(
     if (!out) return;
     const auto& meta = video.last_metadata();
     const auto& astats = audio.stats();
+    const bool boot_ok = boot_trace.running_cycle != 0;
     out << "{\n";
     out << "  \"ok\": " << (ok ? "true" : "false") << ",\n";
     out << "  \"scenario\": \"" << json_escape(scenario.name) << "\",\n";
@@ -144,11 +168,17 @@ static void write_result_json(
     out << "  \"message\": \"" << json_escape(message) << "\",\n";
     out << "  \"status\": \"" << (ok ? "running" : "failed") << "\",\n";
     out << "  \"cycles_74a\": " << cycles_74a << ",\n";
-    out << "  \"boot\": { \"ok\": " << (ok ? "true" : "false")
+    out << "  \"boot\": { \"ok\": " << (boot_ok ? "true" : "false")
         << ", \"last_host_command\": \"" << hex32(bridge.last_host_command())
         << "\", \"last_host_result\": \"" << hex32(bridge.last_host_result())
         << "\", \"last_host_status_word\": \"" << hex32(bridge.last_host_status_word())
-        << "\", \"last_target_word\": \"" << hex32(bridge.last_target_word()) << "\" },\n";
+        << "\", \"last_target_word\": \"" << hex32(bridge.last_target_word())
+        << "\", \"start_cycle\": " << boot_trace.start_cycle
+        << ", \"setup_cycle\": " << boot_trace.setup_cycle
+        << ", \"reset_enter_cycle\": " << boot_trace.reset_enter_cycle
+        << ", \"target_ready_cycle\": " << boot_trace.target_ready_cycle
+        << ", \"reset_exit_cycle\": " << boot_trace.reset_exit_cycle
+        << ", \"running_cycle\": " << boot_trace.running_cycle << " },\n";
     out << "  \"data\": { \"slots\": [\n";
     for (size_t i = 0; i < slots.size(); ++i) {
         const auto& slot = slots[i];
@@ -157,6 +187,7 @@ static void write_result_json(
             << "\", \"address\": \"" << hex32(slot.address)
             << "\", \"file\": \"" << json_escape(slot.file.string())
             << "\", \"loaded_size\": " << slot.loaded_size
+            << ", \"loaded_checksum\": \"" << hex32(static_cast<uint32_t>(slot.loaded_checksum & 0xFFFFFFFFu)) << "\""
             << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
             << ", \"deferload\": " << (slot.deferload ? "true" : "false") << " }";
         out << (i + 1 == slots.size() ? "\n" : ",\n");
@@ -166,9 +197,19 @@ static void write_result_json(
         << ", \"frames_completed\": " << video.frames_completed()
         << ", \"frames_started\": " << video.frames_started()
         << ", \"active_width\": " << meta.active_width
+        << ", \"active_width_min\": " << meta.active_width_min
         << ", \"active_height\": " << meta.active_height
+        << ", \"total_pixel_clocks\": " << meta.total_pixel_clocks
+        << ", \"pixels_per_line_min\": " << meta.pixels_per_line_min
+        << ", \"pixels_per_line_max\": " << meta.pixels_per_line_max
         << ", \"hs_pulses\": " << meta.hs_pulses
         << ", \"vs_pulses\": " << meta.vs_pulses
+        << ", \"hs_after_vs_gap_min\": " << meta.hs_after_vs_gap_min
+        << ", \"hs_to_de_gap_min\": " << meta.hs_to_de_gap_min
+        << ", \"de_to_hs_gap_min\": " << meta.de_to_hs_gap_min
+        << ", \"rgb_when_de_low_errors\": " << meta.rgb_when_de_low_errors
+        << ", \"pulse_width_errors\": " << meta.pulse_width_errors
+        << ", \"skip_errors\": " << meta.skip_errors
         << ", \"errors\": " << video.errors() << " },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
@@ -176,11 +217,42 @@ static void write_result_json(
         << ", \"max_l\": " << astats.max_l
         << ", \"min_r\": " << astats.min_r
         << ", \"max_r\": " << astats.max_r
+        << ", \"peak_to_peak_l\": " << astats.peak_to_peak_l
+        << ", \"peak_to_peak_r\": " << astats.peak_to_peak_r
         << ", \"dc_offset_l\": " << astats.dc_offset_l
         << ", \"dc_offset_r\": " << astats.dc_offset_r
         << ", \"clipped_samples\": " << astats.clipped_samples << " },\n";
+    out << "  \"interact\": { \"persistent_writes\": " << interact_writes << " },\n";
     out << "  \"input\": { \"scripted_events\": " << scenario.inputs.size()
-        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false") << " }\n";
+        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false") << " },\n";
+    out << "  \"save\": { \"reports\": [\n";
+    for (size_t i = 0; i < save_reports.size(); ++i) {
+        const auto& report = save_reports[i];
+        out << "    { \"id\": " << report.id
+            << ", \"bytes\": " << report.bytes
+            << ", \"path\": \"" << json_escape(report.path.string())
+            << "\", \"matches_input\": " << (report.matches_input ? "true" : "false") << " }";
+        out << (i + 1 == save_reports.size() ? "\n" : ",\n");
+    }
+    out << "  ] },\n";
+    out << "  \"readbacks\": [\n";
+    for (size_t i = 0; i < readbacks.size(); ++i) {
+        const auto& readback = readbacks[i];
+        out << "    { \"name\": \"" << json_escape(readback.expect.name)
+            << "\", \"address\": \"" << hex32(readback.expect.address)
+            << "\", \"expected\": \"" << hex32(readback.expect.value)
+            << "\", \"mask\": \"" << hex32(readback.expect.mask)
+            << "\", \"observed\": \"" << hex32(readback.observed)
+            << "\", \"ok\": " << (readback.ok ? "true" : "false") << " }";
+        out << (i + 1 == readbacks.size() ? "\n" : ",\n");
+    }
+    out << "  ],\n";
+    out << "  \"failures\": [\n";
+    for (size_t i = 0; i < failures.size(); ++i) {
+        out << "    \"" << json_escape(failures[i]) << "\"";
+        out << (i + 1 == failures.size() ? "\n" : ",\n");
+    }
+    out << "  ]\n";
     out << "}\n";
 }
 
@@ -245,6 +317,122 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
     }
 }
 
+static uint64_t total_loaded_bytes(const std::vector<DataSlot>& slots) {
+    uint64_t total = 0;
+    for (const auto& slot : slots) total += slot.loaded_size;
+    return total;
+}
+
+static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video) {
+    const auto& expect = scenario.video_expect;
+    const auto& meta = video.last_metadata();
+    const uint64_t required_frames = std::max<uint64_t>(scenario.frames, expect.min_frames);
+    if (video.frames_completed() < required_frames) asserts.fail("video: did not produce required frame count");
+    if (expect.active_width && meta.active_width != expect.active_width) asserts.fail("video: active width mismatch");
+    if (expect.active_height && meta.active_height != expect.active_height) asserts.fail("video: active height mismatch");
+    if (video.errors() > expect.max_errors) asserts.fail("video: protocol error count exceeded");
+    if (expect.require_rgb_zero_when_de_low && meta.rgb_when_de_low_errors != 0) asserts.fail("video: RGB was nonzero while DE was low");
+    if (expect.require_single_cycle_sync && meta.pulse_width_errors != 0) asserts.fail("video: HS/VS pulse width was not one pixel clock");
+    if (expect.require_skip_only_during_de && meta.skip_errors != 0) asserts.fail("video: SKIP asserted while DE was low");
+    if (expect.min_hs_after_vs_cycles && meta.hs_after_vs_gap_min < expect.min_hs_after_vs_cycles) asserts.fail("video: HS occurred too soon after VS");
+    if (expect.min_hs_to_de_gap_cycles && meta.hs_to_de_gap_min < expect.min_hs_to_de_gap_cycles) asserts.fail("video: DE asserted too soon after HS");
+    if (expect.min_de_to_hs_gap_cycles && meta.de_to_hs_gap_min < expect.min_de_to_hs_gap_cycles) asserts.fail("video: HS occurred too soon after DE fell");
+    if ((expect.min_refresh_hz || expect.max_refresh_hz) && expect.pixel_clock_hz > 0.0 && meta.total_pixel_clocks > 0) {
+        const double refresh = expect.pixel_clock_hz / static_cast<double>(meta.total_pixel_clocks);
+        if (expect.min_refresh_hz && refresh < expect.min_refresh_hz) asserts.fail("video: refresh below expected range");
+        if (expect.max_refresh_hz && refresh > expect.max_refresh_hz) asserts.fail("video: refresh above expected range");
+    }
+}
+
+static void validate_audio(Assertions& asserts, const Scenario& scenario, const AudioCapture& audio) {
+    const auto& expect = scenario.audio_expect;
+    const auto& stats = audio.stats();
+    if (stats.samples < expect.min_samples) asserts.fail("audio: decoded sample count below expectation");
+    if (expect.require_changing &&
+        (stats.peak_to_peak_l < expect.min_peak_to_peak && stats.peak_to_peak_r < expect.min_peak_to_peak)) {
+        asserts.fail("audio: samples did not change enough");
+    }
+    if (stats.clipped_samples > expect.max_clipped_samples) asserts.fail("audio: clipped sample count exceeded");
+    if (expect.max_abs_dc_offset > 0.0 &&
+        (std::fabs(stats.dc_offset_l) > expect.max_abs_dc_offset || std::fabs(stats.dc_offset_r) > expect.max_abs_dc_offset)) {
+        asserts.fail("audio: DC offset exceeded");
+    }
+}
+
+static void validate_data(Assertions& asserts, const Scenario& scenario) {
+    const auto& expect = scenario.data_expect;
+    for (const auto& slot : scenario.slots) {
+        if (expect.require_required_slots && slot.required && !slot.deferload && slot.loaded_size == 0) {
+            asserts.fail("data: required slot " + std::to_string(slot.id) + " was not loaded");
+        }
+        if (expect.require_all_file_slots_loaded && !slot.deferload && !slot.file.empty() && slot.loaded_size == 0) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " has a file but loaded zero bytes");
+        }
+    }
+    if (expect.expected_total_loaded_bytes && total_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {
+        asserts.fail("data: total loaded byte count mismatch");
+    }
+}
+
+static void validate_reset(Assertions& asserts, const Scenario& scenario, const BootTrace& trace) {
+    const auto& expect = scenario.reset_expect;
+    if (expect.require_reset_enter && trace.reset_enter_cycle == 0) asserts.fail("reset: Reset Enter was not observed");
+    if (expect.require_reset_exit && trace.reset_exit_cycle == 0) asserts.fail("reset: Reset Exit was not observed");
+    if (expect.require_ready_to_run && trace.target_ready_cycle == 0) asserts.fail("reset: target Ready to Run was not observed");
+    if (trace.reset_enter_cycle && trace.data_all_complete_cycle && trace.reset_enter_cycle > trace.data_all_complete_cycle) asserts.fail("reset: data completed before Reset Enter");
+    if (trace.data_all_complete_cycle && trace.target_ready_cycle && trace.data_all_complete_cycle > trace.target_ready_cycle) asserts.fail("reset: Ready to Run occurred before data all-complete");
+    if (trace.target_ready_cycle && trace.reset_exit_cycle && trace.target_ready_cycle > trace.reset_exit_cycle) asserts.fail("reset: Reset Exit occurred before Ready to Run");
+    if (trace.reset_exit_cycle && trace.running_cycle && trace.reset_exit_cycle > trace.running_cycle) asserts.fail("reset: running status occurred before Reset Exit");
+    if (expect.max_setup_cycles && trace.setup_cycle && trace.setup_cycle - trace.start_cycle > expect.max_setup_cycles) asserts.fail("reset: setup took too many cycles");
+    if (expect.max_boot_cycles && trace.running_cycle && trace.running_cycle - trace.start_cycle > expect.max_boot_cycles) asserts.fail("reset: boot took too many cycles");
+    if (expect.max_reset_exit_to_running_cycles && trace.running_cycle && trace.reset_exit_cycle &&
+        trace.running_cycle - trace.reset_exit_cycle > expect.max_reset_exit_to_running_cycles) {
+        asserts.fail("reset: Reset Exit to running took too many cycles");
+    }
+}
+
+static void validate_save(Assertions& asserts, const Scenario& scenario, const std::vector<SaveReport>& reports) {
+    if (scenario.save_expect.require_nonvolatile_unload) {
+        bool any = false;
+        for (const auto& report : reports) {
+            if (report.bytes > 0) any = true;
+        }
+        if (!any) asserts.fail("save: no nonvolatile save data was unloaded");
+    }
+    if (scenario.save_expect.require_roundtrip_match) {
+        for (const auto& report : reports) {
+            if (!report.matches_input) asserts.fail("save: unloaded slot " + std::to_string(report.id) + " did not match input");
+        }
+    }
+}
+
+static void validate_interact(Assertions& asserts, const Scenario& scenario, size_t interact_writes) {
+    if (interact_writes < scenario.interact_expect.min_persistent_writes) asserts.fail("interact: persistent write count below expectation");
+}
+
+static void validate_input(Assertions& asserts, const Scenario& scenario, const InputDriver& inputs) {
+    if (!scenario.inputs.empty() && scenario.input_expect.require_scripted_activity && !inputs.ever_active()) {
+        asserts.fail("input: scripted input was never driven");
+    }
+}
+
+template <typename Bridge>
+static std::vector<ReadbackObservation> run_readbacks(Bridge& bridge, const Scenario& scenario, Assertions& asserts) {
+    std::vector<ReadbackObservation> observations;
+    for (const auto& expect : scenario.readbacks) {
+        ReadbackObservation observation;
+        observation.expect = expect;
+        observation.observed = bridge.read32(expect.address);
+        observation.ok = (observation.observed & expect.mask) == (expect.value & expect.mask);
+        if (!observation.ok) {
+            const auto name = expect.name.empty() ? hex32(expect.address) : expect.name;
+            asserts.fail("bridge: readback mismatch for " + name);
+        }
+        observations.push_back(observation);
+    }
+    return observations;
+}
+
 int main(int argc, char** argv) {
     CliOptions opt;
     std::string phase = "startup";
@@ -262,6 +450,8 @@ int main(int argc, char** argv) {
             if (w) scenario.expected_width = w;
             if (h) scenario.expected_height = h;
         }
+        if (scenario.video_expect.active_width == 0) scenario.video_expect.active_width = scenario.expected_width;
+        if (scenario.video_expect.active_height == 0) scenario.video_expect.active_height = scenario.expected_height;
 
         auto context = std::make_unique<VerilatedContext>();
         context->commandArgs(argc, argv);
@@ -299,12 +489,14 @@ int main(int argc, char** argv) {
         bridge.reset_lines();
 
         size_t interact_writes = 0;
+        BootTrace boot_trace;
         if (!opt.no_boot) {
             phase = "boot";
-            ApfHost<Vcore_top> host(bridge);
+            ApfHost<Vcore_top> host(bridge, [&]() { return sim.cycles_74a(); });
             host.boot(scenario.slots, [&]() {
                 interact_writes = scenario.interact.write_persistent_defaults(bridge);
             });
+            boot_trace = host.trace();
             if (interact_writes) std::cout << "PASS interact: " << interact_writes << " persistent writes verified\n";
             video.reset_capture();
             audio.reset_capture();
@@ -330,21 +522,27 @@ int main(int argc, char** argv) {
 
         phase = "assert";
         Assertions asserts;
-        if (video.frames_completed() < scenario.frames) asserts.fail("video did not produce requested frame count before timeout");
-        if (video.errors() != 0) asserts.fail("video protocol/dimension errors detected");
-        if (scenario.inputs.size() && !inputs.ever_active()) asserts.fail("scripted input was never driven");
-        if (audio.sample_count() == 0) asserts.fail("audio capture saw no decoded samples");
+        std::vector<ReadbackObservation> readback_observations = run_readbacks(bridge, scenario, asserts);
 
         phase = "save";
-        if (!opt.dump_saves.empty()) bridge.unload_nonvolatile(scenario.slots, opt.dump_saves);
+        std::vector<SaveReport> save_reports;
+        if (!opt.dump_saves.empty()) save_reports = bridge.unload_nonvolatile(scenario.slots, opt.dump_saves);
+
+        validate_video(asserts, scenario, video);
+        validate_audio(asserts, scenario, audio);
+        validate_data(asserts, scenario);
+        if (!opt.no_boot) validate_reset(asserts, scenario, boot_trace);
+        validate_save(asserts, scenario, save_reports);
+        validate_interact(asserts, scenario, interact_writes);
+        validate_input(asserts, scenario, inputs);
 
         if (!asserts.ok()) {
             asserts.print();
-            write_result_json(opt.result_json, false, "assert", "simulation assertions failed", scenario, scenario.slots, video, audio, inputs, bridge, sim.cycles_74a());
+            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
             return 1;
         }
 
-        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, sim.cycles_74a());
+        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
         const auto& meta = video.last_metadata();
         const auto& astats = audio.stats();
         std::cout << "PASS video: " << video.frames_completed() << " frames, " << meta.active_width << "x" << meta.active_height << " active\n";

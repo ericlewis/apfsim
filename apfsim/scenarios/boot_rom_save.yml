@@ -18,3 +18,8 @@ expect:
   video:
     active_width: 256
     active_height: 224
+  audio:
+    min_samples: 1
+  save:
+    require_nonvolatile_unload: true
+    require_roundtrip_match: true

@@ -48,6 +48,12 @@ inline uint64_t parse_u64(std::string s) {
     return value;
 }
 
+inline double parse_double(std::string s) {
+    s = unquote(trim(s));
+    if (s.empty()) return 0.0;
+    return std::stod(s);
+}
+
 inline bool parse_bool(std::string s) {
     s = unquote(trim(s));
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
