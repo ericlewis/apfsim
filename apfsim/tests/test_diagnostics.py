@@ -171,3 +171,65 @@ def test_diagnostics_surface_memory_model_profile_risk(tmp_path):
 
     assert "SRAM_MODEL_REQUIRED" in diagnostic_codes(doc)
     assert doc["status"] == "fail"
+
+
+def test_diagnostics_surface_live_memory_counter_errors(tmp_path):
+    artifacts = tmp_path / "run"
+    write_json(artifacts / "result.json", passing_result())
+    write_json(artifacts / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "observed": True,
+        "counter_status": "observed",
+        "counters": [
+            {"name": "sram_read_count", "class": "sram", "value": 12, "error": False},
+            {
+                "name": "sram_byte_enable_error",
+                "class": "sram",
+                "value": 1,
+                "error": True,
+                "error_code": "MEMORY_BYTE_ENABLE_MISMATCH",
+            },
+        ],
+        "errors": [
+            {
+                "code": "MEMORY_BYTE_ENABLE_MISMATCH",
+                "severity": "error",
+                "counter": "sram_byte_enable_error",
+                "class": "sram",
+                "value": 1,
+                "observed": True,
+            }
+        ],
+    })
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "MEMORY_BYTE_ENABLE_MISMATCH" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_BYTE_ENABLE_MISMATCH")
+    assert item["phase"] == "memory"
+    assert item["observed"]["counter"] == "sram_byte_enable_error"
+    assert item["evidence"][0]["artifact"] == "memory_activity.json"
+
+
+def test_diagnostics_warn_when_observed_memory_counters_stay_idle_during_load(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["data_load"] = {"total_loaded_bytes": 1024}
+    write_json(artifacts / "result.json", result)
+    write_json(artifacts / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "observed": True,
+        "counter_status": "observed",
+        "counters": [
+            {"name": "sram_read_count", "class": "sram", "value": 0, "error": False},
+            {"name": "sram_write_count", "class": "sram", "value": 0, "error": False},
+        ],
+        "errors": [],
+    })
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "MEMORY_NO_ACTIVITY" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_NO_ACTIVITY")
+    assert item["severity"] == "warning"
+    assert item["observed"]["loaded_bytes"] == 1024

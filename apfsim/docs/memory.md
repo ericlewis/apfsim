@@ -228,6 +228,13 @@ When observed, `result.json.memory_activity` carries the runtime snapshot and th
 }
 ```
 
+Live counter errors are promoted into stable diagnostics:
+
+- `SRAM_BUS_CONTENTION`: SRAM model observed simultaneous output/read drive conflict.
+- `MEMORY_BYTE_ENABLE_MISMATCH`: byte-enable pins were invalid for a write.
+- `MEMORY_STALL_TIMEOUT`: transactional memory request arrived while the model was busy/overrun.
+- `MEMORY_NO_ACTIVITY`: counters were observed but read/write counts stayed zero during a data-loaded run.
+
 Future external RAM work should add model families with explicit confidence levels:
 
 - `ideal`: deterministic zero/low-latency transactions for early bring-up.

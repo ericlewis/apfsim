@@ -209,6 +209,7 @@ def diagnose_artifacts(
     video_shape_path = artifact_root / "video_shape.json"
     video_shape_doc = load_optional_json_object(video_shape_path)
     video_shape = _obj(video_shape_doc.get("video_shape")) if "video_shape" in video_shape_doc else video_shape_doc
+    memory_activity = load_optional_json_object(artifact_root / "memory_activity.json")
     items: list[dict[str, Any]] = []
 
     if not result:
@@ -245,6 +246,8 @@ def diagnose_artifacts(
     interact = _obj(result.get("interact"))
     input_doc = _obj(result.get("input"))
     save = _obj(result.get("save"))
+    if not memory_activity:
+        memory_activity = _obj(result.get("memory_activity"))
 
     if failed_phase == "boot" or (not _as_bool(result.get("ok"), False) and not failed_phase):
         _diag(
@@ -524,6 +527,7 @@ def diagnose_artifacts(
     _diagnose_audio(items, audio, failed_phase, message)
     _diagnose_input(items, input_doc)
     _diagnose_saves(items, data, save, failed_phase, message, _as_bool(result.get("ok"), False))
+    _diagnose_memory_activity(items, memory_activity, result)
 
     _diagnose_profile_risks(items, profile)
     if not _as_bool(result.get("ok"), False) and not any(item.get("severity") == "error" for item in items):
@@ -1042,6 +1046,139 @@ def _diagnose_profile_risks(items: list[dict[str, Any]], profile: dict[str, Any]
             evidence=[{"artifact": "profile", "json_pointer": "/risks"}],
             likely_causes=["core depends on SDRAM/PSRAM/CRAM behavior", "vendor memory controller was stubbed"],
             repairs=[{"kind": "memory_model", "confidence": 0.58, "description": "Select a transactional memory model matching the core's bridge-visible memory controller."}],
+        )
+
+
+def _memory_counter_error_code(counter: dict[str, Any]) -> str:
+    explicit = str(counter.get("error_code") or "")
+    if explicit in KNOWN_CODES:
+        return explicit
+    name = str(counter.get("name") or "").lower()
+    if "bus_contention" in name:
+        return "SRAM_BUS_CONTENTION"
+    if "byte_enable" in name:
+        return "MEMORY_BYTE_ENABLE_MISMATCH"
+    if "overrun" in name or "stall" in name:
+        return "MEMORY_STALL_TIMEOUT"
+    return "MEMORY_MODEL_REQUIRED"
+
+
+def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict[str, Any], result: dict[str, Any]) -> None:
+    if not memory_activity:
+        return
+    counters = [item for item in _list(memory_activity.get("counters")) if isinstance(item, dict)]
+    emitted: set[tuple[str, str]] = set()
+    for index, error in enumerate(_list(memory_activity.get("errors"))):
+        if not isinstance(error, dict):
+            continue
+        code = str(error.get("code") or "MEMORY_MODEL_REQUIRED")
+        if code not in KNOWN_CODES:
+            code = "MEMORY_MODEL_REQUIRED"
+        counter_name = str(error.get("counter") or error.get("name") or "")
+        key = (code, counter_name)
+        if key in emitted:
+            continue
+        emitted.add(key)
+        _diag(
+            items,
+            code=code,
+            phase="memory",
+            severity=str(error.get("severity") or "error"),
+            summary=f"Memory activity counter reported {code}.",
+            observed={
+                "counter": counter_name,
+                "class": error.get("class"),
+                "value": error.get("value"),
+                "observed": error.get("observed", memory_activity.get("observed")),
+            },
+            expected={"memory_error_counters": 0},
+            evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/errors/{index}"}],
+            likely_causes=[
+                "external RAM byte lanes, address bits, or control strobes are miswired",
+                "memory controller accepted a request while busy or stalled",
+                "wrapper exposes a memory model error flag from SRAM/PSRAM/CRAM",
+            ],
+            repairs=[
+                {
+                    "kind": "wrapper_patch",
+                    "confidence": 0.73,
+                    "description": "Inspect the wrapper wiring for the named memory counter and compare it with the core's external RAM bus timing.",
+                }
+            ],
+        )
+    for index, counter in enumerate(counters):
+        if not _as_bool(counter.get("error"), False):
+            continue
+        code = _memory_counter_error_code(counter)
+        counter_name = str(counter.get("name") or "")
+        key = (code, counter_name)
+        if key in emitted:
+            continue
+        emitted.add(key)
+        _diag(
+            items,
+            code=code,
+            phase="memory",
+            severity="error",
+            summary=f"Memory counter {counter_name or '<unnamed>'} reported an error.",
+            observed={
+                "counter": counter_name,
+                "class": counter.get("class"),
+                "value": _as_int(counter.get("value"), 0),
+            },
+            expected={"counter_value": 0},
+            evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],
+            likely_causes=[
+                "external RAM bus contention or invalid byte-enable use",
+                "request/ack transactional model was overrun",
+                "bridge data-load writes are reaching a memory model error path",
+            ],
+            repairs=[
+                {
+                    "kind": "memory_model",
+                    "confidence": 0.76,
+                    "description": "Trace the named counter back to the memory model and inspect address, byte-enable, OE/WE, and request/ack timing.",
+                }
+            ],
+        )
+
+    if not _as_bool(memory_activity.get("observed"), False):
+        return
+    data_load = _obj(result.get("data_load"))
+    loaded_bytes = _as_int(data_load.get("total_loaded_bytes"), 0)
+    if loaded_bytes <= 0:
+        return
+    activity_by_class: dict[str, int] = {}
+    for counter in counters:
+        name = str(counter.get("name") or "").lower()
+        if not (name.endswith("_read_count") or name.endswith("_write_count")):
+            continue
+        cls = str(counter.get("class") or "memory")
+        activity_by_class[cls] = activity_by_class.get(cls, 0) + _as_int(counter.get("value"), 0)
+    for cls, total in sorted(activity_by_class.items()):
+        if total > 0:
+            continue
+        _diag(
+            items,
+            code="MEMORY_NO_ACTIVITY",
+            phase="memory",
+            severity="warning",
+            summary=f"Memory counters for {cls} were observed but stayed at zero during data-loaded run.",
+            observed={"class": cls, "counter_total": total, "loaded_bytes": loaded_bytes},
+            expected={"counter_total": "> 0 when this memory path is used"},
+            evidence=[{"artifact": "memory_activity.json", "json_pointer": "/counters"}],
+            likely_causes=[
+                "standard memory counter ports are wired to the wrong model instance",
+                "data slot loaded into a different memory path than the observed counters",
+                "core did not reach the memory controller despite APF data loading",
+            ],
+            repairs=[
+                {
+                    "kind": "wrapper_patch",
+                    "confidence": 0.55,
+                    "description": "Check whether the data-slot address range should increment the observed memory model's read/write counters.",
+                }
+            ],
         )
 
 
