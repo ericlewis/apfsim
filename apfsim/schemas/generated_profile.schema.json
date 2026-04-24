@@ -58,6 +58,8 @@
       }
     },
     "warnings": { "type": "array", "items": { "type": "string" } },
+    "wrapper_generation": { "type": "object", "additionalProperties": true },
+    "memory": { "type": "object", "additionalProperties": true },
     "inventory": { "type": "object" }
   },
   "additionalProperties": true

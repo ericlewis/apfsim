@@ -70,6 +70,16 @@ def make_artifacts(root: Path):
             {"class": "sdram", "model": "ideal_transactional", "confidence": "bringup_only", "source": "rtl_shims/sdram_sim.sv"}
         ],
     })
+    write_json(root / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "profile": "fake",
+        "observed": False,
+        "classes": ["sdram", "bram"],
+        "external_classes": ["sdram"],
+        "models": [],
+        "counters": [],
+        "errors": [{"code": "SDRAM_INIT_TIMEOUT", "severity": "error", "observed": False}],
+    })
 
 
 def test_summarize_run_flattens_artifacts(tmp_path):
@@ -92,7 +102,10 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["memory_classes"] == ["sdram", "bram"]
     assert row["memory_models"] == ["sdram:ideal_transactional"]
     assert row["memory_risks"] == ["SDRAM_TIMING_NOT_POCKET_LIKE"]
+    assert row["memory_activity_observed"] is False
+    assert row["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
     assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
+    assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
 
 
 def test_write_summary_emits_json_and_tsv(tmp_path):

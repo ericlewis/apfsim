@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from core_discovery import find_slot_objects, find_video_modes, inspect_core
+from memory_wrapper import memory_wrapper_plan, render_memory_wrapper_sv
 
 RTL_EXTS = {".v", ".sv"}
 INCLUDE_EXTS = {".v", ".sv", ".vh", ".svh"}
@@ -105,6 +106,14 @@ def generate_profile_candidate(
     selected_shims = select_shims(root, inv, catalog)
     selected_shim_details = shim_detail_records(selected_shims, catalog, root, apfsim_dir, name)
     generated_paths = generated_filelist_entries(selected_shims, catalog, root, apfsim_dir, name)
+    memory_wrapper = memory_wrapper_plan(inv.memory)
+    if memory_wrapper.get("generated"):
+        generated_paths.append(str(memory_wrapper["path"]))
+        wrapper_module = f"apfsim_{name}_memory_models"
+        (profile_dir / "apfsim_memory_models.sv").write_text(
+            render_memory_wrapper_sv(inv.memory, module_name=wrapper_module)
+        )
+        memory_wrapper["module_name"] = wrapper_module
     excluded_sources = generated_source_paths(selected_shims, catalog, root, apfsim_dir, name)
     qsf_project = parse_qsf_project(select_qsf(root, inv))
     filelist_lines = build_filelist(root, inv, generated_paths, excluded_sources, qsf_project, apfsim_dir)
@@ -121,6 +130,8 @@ def generate_profile_candidate(
         if metadata:
             required_paths.append(placeholderize_path(metadata, root, apfsim_dir))
     required_paths.extend(placeholderize_value(path, root, apfsim_dir) for path in required_paths_for_shims(selected_shims, catalog, root, apfsim_dir, name))
+    if memory_wrapper.get("generated"):
+        required_paths.append(str(memory_wrapper["path"]))
     required_paths = dedupe(required_paths)
 
     profile: dict[str, Any] = {
@@ -152,6 +163,8 @@ def generate_profile_candidate(
         profile["shim_catalog"] = selected_shims
     if inv.memory.get("required"):
         profile["memory"] = inv.memory
+    if memory_wrapper.get("generated"):
+        profile["wrapper_generation"] = {"memory_models": memory_wrapper}
     risks = profile_risks(inv, selected_shims, qsf_project)
     if risks:
         profile["risks"] = risks
@@ -179,6 +192,7 @@ def generate_profile_candidate(
         "action": inv.action,
         "selected_shims": selected_shims,
         "selected_shim_details": selected_shim_details,
+        "wrapper_generation": {"memory_models": memory_wrapper} if memory_wrapper.get("generated") else {},
         "risks": risks,
         "paths": {
             "profile": str(profile_path),

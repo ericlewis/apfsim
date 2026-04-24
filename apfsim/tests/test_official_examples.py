@@ -20,6 +20,7 @@ OFFICIAL_PUBLIC_PROFILES = {
 MOCK_PUBLIC_PROFILES = {
     "mock",
     "mock_port_gate",
+    "mock_rom_stress",
     "mock_target_commands",
     "mock_lifecycle",
 }

@@ -133,6 +133,14 @@ bin/apfsim corpus run \
   --strict
 ```
 
+The public example matrix is checked in:
+
+```sh
+bin/apfsim corpus run --manifest corpus/public_examples.yml --out output/public-examples
+```
+
+It runs deterministic mock gates locally and skips official example checkouts unless their environment variables are configured.
+
 Example manifest:
 
 ```yaml
@@ -209,6 +217,8 @@ bin/apfsim validate-artifacts build/profiles/mock_port_gate/run
 ```
 
 `mock_port_gate` is the deterministic contract gate for boot, reset, bridge, data, video, audio, input, interact, save, and artifact checks.
+
+`mock_rom_stress` is the deterministic odd-sized ROM/data-slot stress gate. It loads 1025 bytes, verifies the partial final bridge word, and reads back the APF-facing RAM window to catch byte-lane/address/endian corruption.
 
 ### Validate Official Example Integrations
 

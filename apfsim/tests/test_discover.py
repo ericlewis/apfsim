@@ -155,8 +155,12 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     assert "apfsim_async_sram_16_model" in details["external_sram_pin_model"]["modules"]
     assert "sram" in candidate["memory"]["available_models"]
     assert "rtl_shims/external_memory_models.sv" in filelist
+    assert "{profile_dir}/apfsim_memory_models.sv" in filelist
+    assert (Path(report["paths"]["profile"]).parent / "apfsim_memory_models.sv").exists()
     assert profile["memory"]["models"]["sdram"]["selected"] == "ideal_transactional"
     assert "external_sram_pin_model" in profile["shim_catalog"]
+    assert profile["wrapper_generation"]["memory_models"]["generated"] is True
+    assert set(profile["wrapper_generation"]["memory_models"]["classes"]) == {"sram", "cram"}
     assert any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
 
 

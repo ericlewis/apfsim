@@ -106,6 +106,7 @@ Read these first:
 - `video_shape.json`: APF-facing runtime video contract.
 - `bridge_summary.json`: bridge counters and command transcript.
 - `source_provenance.json`: sim-only shims/generated files/provenance.
+- `memory_activity.json`: memory model provenance and live counter status when wrapper probes are connected.
 - `package_check.json`: APF metadata and SD-card path validation.
 - `summary.json` / `summary.tsv`: normalized one-row output for corpus/coreir consumption.
 - `corpus_summary.json` / `corpus_summary.tsv`: aggregate manifest-run output for batch decisions.
@@ -123,7 +124,7 @@ Read these first:
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
 | Shim/source provenance | Make sim-only VHDL, primitive shims, and memory model libraries visible in pass results. | `source_provenance.shimmed_modules[]`, `kind`, `confidence`, `modules`, `memory_classes`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
-| Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks` |
+| Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `source_provenance.wrapper_generation`, `memory_activity.json`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks`, `summary.row.memory_activity_observed`, `summary.row.memory_error_codes` |
 
 ## Per-Core Row Normalization
 
@@ -151,6 +152,8 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `memory_classes`
 - `memory_models`
 - `memory_risks`
+- `memory_activity_observed`
+- `memory_error_codes`
 - `artifact_dir`
 
 `bin/apfsim summarize-run` emits this row today as `summary.json.row` and `summary.tsv`. `bringup` writes both automatically after package-check, run, diagnose, and optional repair-plan.
@@ -202,6 +205,14 @@ Recommended row fields:
 - `cores[]`: one normalized row per manifest entry, including `summary_path`, `package_check_path`, `first_error_code`, video/audio/data fields, and artifact paths.
 
 Root-missing entries are skipped so agents can share manifests across machines. Missing ROMs/assets are failures with `ROM_MISSING` because they indicate a bad generator input or package manifest. Use `--strict` when the corpus is a CI gate; omit it for exploratory inventory runs.
+
+The public tree includes a ready-made public-example manifest:
+
+```sh
+bin/apfsim corpus run --manifest corpus/public_examples.yml --out output/public-examples
+```
+
+It includes the deterministic contract-test profiles plus the supported official openFPGA examples. External official profiles skip cleanly unless the documented checkout environment variables are present.
 
 Package validation permits data slots with no `address` field. This is valid for setup-only JSON/instance slots that the core does not receive as a bridge payload. If a corpus run needs `apfsim` to load bytes for that slot, the generated scenario/profile must still provide a concrete bridge address.
 
@@ -258,3 +269,4 @@ Memory classification policy:
 - `bram` and `fifo` generally mean internal behavioral shims are enough for APF contract smoke.
 - `sdram` currently means the generic idealized SDRAM model can unblock bring-up, but hardware confidence remains limited.
 - `sram`, `psram`, `cram`, or `ddr` should be treated as requiring explicit external RAM model work unless the profile names a stronger model.
+- Generated profiles emit `apfsim_memory_models.sv` for `sram`/`psram`/`cram` as a reviewable scaffold. Do not treat it as live memory validation until `memory_activity.observed` is true or a run-specific counter probe exists.

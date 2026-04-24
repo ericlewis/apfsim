@@ -58,6 +58,7 @@
         "additionalProperties": true
       }
     },
+    "wrapper_generation": { "type": "object", "additionalProperties": true },
     "sim_only_paths": { "type": "array", "items": { "type": "string" } }
   },
   "additionalProperties": true

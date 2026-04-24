@@ -117,6 +117,31 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_rom_load_stress_covers_odd_sized_payload_readback(tmp_path):
+    artifacts = tmp_path / "rom-stress"
+    r = run_cli("run", "--profile", "mock_rom_stress", "--artifacts", str(artifacts), timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["ok"] is True
+    slot = result["data"]["slots"][0]
+    assert slot["id"] == 1
+    assert slot["loaded_size"] == 1025
+    assert slot["loaded_words"] == 257
+    assert slot["observed_write_words"] == 257
+    assert slot["observed_first_write_address"] == "0x10000000"
+    assert slot["observed_last_write_address"] == "0x10000400"
+    assert slot["loaded_checksum"] == "0xC2DB5F2D9083B8A2"
+    assert slot["readback_attempted"] is True
+    assert slot["readback_matches"] is True
+    assert slot["readback_bytes"] == 1025
+    assert slot["readback_checksum"] == slot["loaded_checksum"]
+    assert slot["readback_mismatch_count"] == 0
+    readbacks = {item["name"]: item for item in result["readbacks"]}
+    assert readbacks["mock_rom_write_count"]["ok"] is True
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
 def test_target_command_service_covers_runtime_dataslot_and_filename_paths(tmp_path):
     artifacts = tmp_path / "target-commands"
     r = run_cli("run", "--profile", "mock_target_commands", "--artifacts", str(artifacts), "--bridge-trace", timeout=180)

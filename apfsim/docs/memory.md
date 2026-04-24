@@ -40,12 +40,25 @@ Runtime provenance writes the same information to `source_provenance.json`:
 
 - `memory_dependencies`: detected memory classes, evidence, risks, and default model choices.
 - `memory_models`: flattened selected model entries.
+- `wrapper_generation.memory_models`: generated wrapper scaffold metadata when SRAM/PSRAM/CRAM classes are detected.
+
+Every diagnosed run also writes `memory_activity.json`:
+
+- `observed`: `false` until a wrapper connects live public counters.
+- `classes` and `external_classes`: copied from memory dependency discovery.
+- `models`: selected model names and confidence.
+- `selected_shims`: catalog entries that contributed memory models.
+- `wrapper_generation`: generated scaffold path/classes/modules.
+- `errors`: profile-level memory errors surfaced before live counters exist.
+- `notes`: whether this is provenance-only or live counter data.
 
 `summary.json.row` and `corpus_summary.tsv` include:
 
 - `memory_classes`
 - `memory_models`
 - `memory_risks`
+- `memory_activity_observed`
+- `memory_error_codes`
 
 `memory.available_models` points at catalog entries that can be used by a generated wrapper. This is deliberately separate from `memory.models`: an available model is not selected until the profile/wrapper actually instantiates or includes it.
 
@@ -110,6 +123,30 @@ The first external RAM model library is `rtl_shims/external_memory_models.sv`:
 
 These are model libraries for generated wrappers. They do not magically match every upstream controller port list.
 
+When `generate-profile` detects `sram`, `psram`, or `cram`, it now emits a reviewable helper:
+
+```text
+generated-profile/<name>/apfsim_memory_models.sv
+```
+
+The generated profile records it under:
+
+```json
+{
+  "wrapper_generation": {
+    "memory_models": {
+      "generated": true,
+      "path": "{profile_dir}/apfsim_memory_models.sv",
+      "classes": ["sram", "cram"],
+      "wire_required": true,
+      "confidence": "scaffold_only"
+    }
+  }
+}
+```
+
+This file is not a silent source patch. It is a wrapper scaffold that a generator or human must wire to the core's external RAM pins/transactions. Until that wiring exists, `memory_activity.json.observed` remains `false`.
+
 Future external RAM work should add model families with explicit confidence levels:
 
 - `ideal`: deterministic zero/low-latency transactions for early bring-up.
@@ -144,3 +181,13 @@ A generator should consume memory fields as confidence data:
 - `sram`, `psram`, `cram`, or `ddr`: classify as requiring an external RAM model unless the profile explicitly supplies one.
 
 Do not silently stub an external RAM path and call the core certified. Mark the model, confidence, and risk in the profile and artifacts.
+
+## Built-In ROM Stress
+
+Use the built-in `mock_rom_stress` profile to test odd-sized data-slot writes, partial last words, and bridge readback:
+
+```sh
+bin/apfsim run --profile mock_rom_stress --artifacts output/mock-rom-stress
+```
+
+This loads `examples/assets/rom_stress.bin` as 1025 bytes at `0x10000000`, expects 257 bridge writes, reads back exactly 1025 bytes, and checks the simulator FNV-1a checksum `0xC2DB5F2D9083B8A2`.

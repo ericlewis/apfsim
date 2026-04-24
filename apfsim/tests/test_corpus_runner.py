@@ -60,6 +60,8 @@ if cmd == 'bringup':
         'memory_classes': ['sdram'],
         'memory_models': ['sdram:ideal_transactional'],
         'memory_risks': ['SDRAM_TIMING_NOT_POCKET_LIKE'],
+        'memory_activity_observed': False,
+        'memory_error_codes': ['SDRAM_INIT_TIMEOUT'],
         'artifact_dir': str(run),
     }
     doc = {
@@ -125,6 +127,7 @@ def test_corpus_manifest_runner_aggregates_pass_fail_skip_and_preflight(tmp_path
     assert rows["with-rom"]["loaded_bytes_total"] == 1024
     assert rows["with-rom"]["shim_confidences"] == ["intel_pllbase_sim:deterministic_clock"]
     assert rows["with-rom"]["memory_classes"] == ["sdram"]
+    assert rows["with-rom"]["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
     blockers = {item["code"]: item["count"] for item in doc["top_blockers"]}
     assert blockers["VIDEO_WIDTH_MISMATCH"] == 1
     assert blockers["ROM_MISSING"] == 1

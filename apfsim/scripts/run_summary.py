@@ -36,6 +36,8 @@ TSV_COLUMNS = [
     "memory_classes",
     "memory_models",
     "memory_risks",
+    "memory_activity_observed",
+    "memory_error_codes",
     "artifact_dir",
 ]
 
@@ -92,6 +94,7 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
     diagnostics = optional_json_object(artifact_dir / "diagnostics.json")
     package = optional_json_object(package_check_path or (artifact_dir / "package_check.json"))
     provenance = optional_json_object(artifact_dir / "source_provenance.json")
+    memory_activity = optional_json_object(artifact_dir / "memory_activity.json")
 
     diag_items = [item for item in _list(diagnostics.get("diagnostics")) if isinstance(item, dict)]
     blocking_codes = [str(item.get("code")) for item in diag_items if item.get("severity") == "error"]
@@ -127,6 +130,11 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
     memory_risks = [
         str(item.get("code"))
         for item in _list(memory_doc.get("risks"))
+        if isinstance(item, dict) and item.get("code")
+    ]
+    memory_error_codes = [
+        str(item.get("code"))
+        for item in _list(memory_activity.get("errors"))
         if isinstance(item, dict) and item.get("code")
     ]
     data_slots = [slot for slot in _list(data_load.get("slots")) if isinstance(slot, dict)]
@@ -179,6 +187,8 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "memory_classes": memory_classes,
         "memory_models": memory_models,
         "memory_risks": memory_risks,
+        "memory_activity_observed": _as_bool(memory_activity.get("observed"), False),
+        "memory_error_codes": memory_error_codes,
         "artifact_dir": str(artifact_dir),
     }
     return {
@@ -223,6 +233,7 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
             "shim_details": shim_items,
             "memory_dependencies": memory_doc,
             "memory_models": memory_models_doc,
+            "memory_activity": memory_activity,
         },
     }
 

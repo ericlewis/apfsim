@@ -71,6 +71,10 @@
       "description": "Detected memory dependencies and selected sim model confidence.",
       "type": "object"
     },
+    "wrapper_generation": {
+      "description": "Reviewable generated wrapper scaffolds such as external RAM model helpers.",
+      "type": "object"
+    },
     "generated_files": { "type": "array" }
   },
   "additionalProperties": true

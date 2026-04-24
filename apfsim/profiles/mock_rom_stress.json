@@ -1,0 +1,30 @@
+{
+  "name": "mock_rom_stress",
+  "description": "Built-in ROM/data-slot stress profile with odd-sized payload and bridge readback verification",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist.f",
+  "scenario": "scenarios/rom_load_stress.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "frames": 2,
+  "timeout_cycles": 5000000,
+  "build_dir": "build/profiles/mock_rom_stress/obj",
+  "artifact_root": "build/profiles/mock_rom_stress/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "examples/assets/rom_stress.bin"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

@@ -743,6 +743,7 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
         "generated_files": generated_files,
         "memory_dependencies": memory_dependencies,
         "memory_models": memory_models,
+        "wrapper_generation": profile.raw.get("wrapper_generation", {}),
         "sim_only_paths": [
             path for path in profile.raw.get("required_paths", [])
             if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)
@@ -750,6 +751,55 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
     }
     artifact_root.mkdir(parents=True, exist_ok=True)
     (artifact_root / "source_provenance.json").write_text(json.dumps(doc, indent=2) + "\n")
+    write_memory_activity(profile, artifact_root, doc)
+    return doc
+
+
+def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dict[str, Any]) -> dict[str, Any]:
+    memory_dependencies = provenance.get("memory_dependencies") if isinstance(provenance.get("memory_dependencies"), dict) else {}
+    wrapper_generation = provenance.get("wrapper_generation") if isinstance(provenance.get("wrapper_generation"), dict) else {}
+    memory_wrapper = wrapper_generation.get("memory_models") if isinstance(wrapper_generation.get("memory_models"), dict) else {}
+    shimmed = [item for item in provenance.get("shimmed_modules", []) if isinstance(item, dict)]
+    memory_shims = [
+        {
+            "name": item.get("name", ""),
+            "kind": item.get("kind", ""),
+            "confidence": item.get("confidence", ""),
+            "memory_classes": item.get("memory_classes", []),
+        }
+        for item in shimmed
+        if item.get("memory_classes")
+    ]
+    errors = []
+    for risk in memory_dependencies.get("risks", []):
+        if not isinstance(risk, dict):
+            continue
+        if str(risk.get("severity", "warning")) != "error":
+            continue
+        errors.append({
+            "code": str(risk.get("code") or "MEMORY_MODEL_REQUIRED"),
+            "severity": "error",
+            "message": str(risk.get("message") or ""),
+            "observed": False,
+        })
+    classes = [str(item) for item in memory_dependencies.get("classes", [])]
+    doc = {
+        "schema": "apfsim.memory_activity.v1",
+        "profile": profile.name,
+        "observed": False,
+        "classes": classes,
+        "external_classes": [str(item) for item in memory_dependencies.get("external_classes", [])],
+        "models": provenance.get("memory_models", []),
+        "selected_shims": memory_shims,
+        "wrapper_generation": memory_wrapper,
+        "counters": [],
+        "errors": errors,
+        "notes": [
+            "Memory activity is a provenance artifact unless the generated wrapper wires public counter probes.",
+            "Use data-slot readback and bridge traces to catch ROM corruption until live memory counters are connected.",
+        ] if classes else ["No memory dependencies were discovered for this profile."],
+    }
+    (artifact_root / "memory_activity.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     return doc
 
 
@@ -980,17 +1030,28 @@ def first_diagnostic_code(doc: dict[str, Any], *, severity: str) -> str:
 
 def write_repair_plan(artifact_root: Path, diagnostics_doc: dict[str, Any], *, emit_patches: bool = False) -> None:
     repairs: list[dict[str, Any]] = []
+    memory_hints: list[dict[str, Any]] = []
     for diagnostic in diagnostics_doc.get("diagnostics", []):
         if not isinstance(diagnostic, dict):
             continue
+        code = str(diagnostic.get("code") or "")
         for repair in diagnostic.get("repairs", []):
             if not isinstance(repair, dict):
                 continue
             item = dict(repair)
-            item["diagnostic_code"] = diagnostic.get("code")
+            item["diagnostic_code"] = code
             item["phase"] = diagnostic.get("phase")
             item["severity"] = diagnostic.get("severity")
             repairs.append(item)
+        for hint in memory_repair_hints(code):
+            item = {
+                **hint,
+                "diagnostic_code": code,
+                "phase": diagnostic.get("phase"),
+                "severity": diagnostic.get("severity"),
+            }
+            repairs.append(item)
+            memory_hints.append(item)
     plan = {
         "schema": "apfsim.repair_plan.v1",
         "artifact_dir": str(artifact_root),
@@ -1008,8 +1069,112 @@ def write_repair_plan(artifact_root: Path, diagnostics_doc: dict[str, Any], *, e
             "Source patches are intentionally not synthesized until the matching repair rule is implemented.\n",
             encoding="utf-8",
         )
+        if memory_hints:
+            write_memory_repair_hints(patches_dir, memory_hints)
         plan["patches_dir"] = str(patches_dir)
     (artifact_root / "repair-plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+
+def memory_repair_hints(code: str) -> list[dict[str, Any]]:
+    table: dict[str, list[dict[str, Any]]] = {
+        "DATA_SLOT_READBACK_MISMATCH": [
+            {
+                "kind": "memory_corruption_probe",
+                "confidence": 0.80,
+                "description": "Enable ROM/data-slot readback and inspect address lane, byte lane, endian, and write-strobe timing around the failing slot.",
+                "actions": [
+                    "Run the scenario with verify_readback enabled on the affected slot.",
+                    "Inspect bridge.log for observed_first_write_address/observed_last_write_address and short writes.",
+                    "If the slot maps to external RAM, wire the generated memory model counters and rerun.",
+                ],
+            }
+        ],
+        "SRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.72,
+                "description": "Select the public async SRAM pin model and generate a wrapper that connects SRAM pins to apfsim_async_sram_16_model.",
+                "profile_fields": {"shim_catalog": ["external_sram_pin_model"]},
+            }
+        ],
+        "PSRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.68,
+                "description": "Select the PSRAM transactional model and wire the generated wrapper to the core's PSRAM request/ack interface.",
+                "profile_fields": {"shim_catalog": ["psram_cram_transactional_models"]},
+            }
+        ],
+        "CRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.68,
+                "description": "Select the CRAM transactional model and wire the generated wrapper to the core's CRAM/cart-RAM interface.",
+                "profile_fields": {"shim_catalog": ["psram_cram_transactional_models"]},
+            }
+        ],
+        "MEMORY_BYTE_ENABLE_MISMATCH": [
+            {
+                "kind": "wrapper_patch_hint",
+                "confidence": 0.70,
+                "description": "Audit byte-enable polarity and lane ordering; Pocket cores often corrupt ROMs when low/high byte strobes are swapped or active-low lanes are treated as active-high.",
+            }
+        ],
+        "MEMORY_WIDTH_MISMATCH": [
+            {
+                "kind": "wrapper_patch_hint",
+                "confidence": 0.66,
+                "description": "Insert an explicit width adapter between bridge-loaded 32-bit words and the external RAM data bus.",
+            }
+        ],
+        "MEMORY_UNINITIALIZED_READ": [
+            {
+                "kind": "scenario_patch_hint",
+                "confidence": 0.62,
+                "description": "Add a ROM-load stress scenario and hold reset until required data-slot writes complete.",
+            }
+        ],
+        "MEMORY_STALL_TIMEOUT": [
+            {
+                "kind": "memory_model_hint",
+                "confidence": 0.62,
+                "description": "Use a latency-configurable memory profile and check that the core handles ack/busy stalls instead of assuming zero-latency RAM.",
+            }
+        ],
+    }
+    return [dict(item) for item in table.get(code, [])]
+
+
+def write_memory_repair_hints(patches_dir: Path, hints: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Memory Repair Hints",
+        "",
+        "These are reviewable hints, not source mutations. Apply the relevant profile/wrapper changes manually or through a generator rule.",
+        "",
+    ]
+    for idx, hint in enumerate(hints, start=1):
+        lines.extend([
+            f"## {idx}. {hint.get('diagnostic_code', 'UNKNOWN')}",
+            "",
+            f"- kind: `{hint.get('kind', '')}`",
+            f"- confidence: `{hint.get('confidence', '')}`",
+            f"- description: {hint.get('description', '')}",
+            "",
+        ])
+        actions = hint.get("actions")
+        if isinstance(actions, list) and actions:
+            lines.append("Actions:")
+            for action in actions:
+                lines.append(f"- {action}")
+            lines.append("")
+        profile_fields = hint.get("profile_fields")
+        if isinstance(profile_fields, dict) and profile_fields:
+            lines.append("Profile fields:")
+            lines.append("```json")
+            lines.append(json.dumps(profile_fields, indent=2))
+            lines.append("```")
+            lines.append("")
+    (patches_dir / "memory_model_hints.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def print_failure_hint(artifact_root: Path) -> None:
