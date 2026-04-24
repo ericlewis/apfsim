@@ -368,13 +368,17 @@ public:
             slot->loaded_words = (slot->loaded_size + 3) / 4;
             slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
             slot->loaded_checksum = fnv1a64(slot->image);
+            slot->loaded_crc32 = crc32(slot->image);
         }
         if (has_explicit_size) {
             slot->loaded_size = static_cast<size_t>(explicit_size);
             slot->loaded_words = (slot->loaded_size + 3) / 4;
             slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
             if (slot->image.size() < slot->loaded_size) slot->image.resize(slot->loaded_size, 0);
-            if (!slot->image.empty()) slot->loaded_checksum = fnv1a64(slot->image);
+            if (!slot->image.empty()) {
+                slot->loaded_checksum = fnv1a64(slot->image);
+                slot->loaded_crc32 = crc32(slot->image);
+            }
         }
         if (update_slot_table) write_slot_table_entry(slots, slot_id);
         ++stats_.runtime_dataslot_updates;
@@ -450,6 +454,7 @@ public:
         slot.observed_last_write_address = 0;
         slot.observed_write_address_errors = 0;
         slot.loaded_checksum = fnv1a64(bytes);
+        slot.loaded_crc32 = crc32(bytes);
         slot.image = bytes;
         log_event("DATASLOT load begin id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) +
                   " address=" + hex32(slot.address) + " file=" + slot.file.string());
@@ -479,7 +484,7 @@ public:
             report.checksum = fnv1a64(bytes);
             if (!slot.file.empty()) {
                 const auto input = read_binary_file(slot.file);
-                report.input_checksum = fnv1a64(input);
+            report.input_checksum = fnv1a64(input);
                 report.matches_input = input == bytes;
             }
             reports.push_back(report);
@@ -588,6 +593,7 @@ private:
             slot.loaded_words = (slot.loaded_size + 3) / 4;
             slot.loaded_last_address = slot.loaded_words == 0 ? slot.address : slot.address + static_cast<uint32_t>((slot.loaded_words - 1) * 4);
             slot.loaded_checksum = fnv1a64(slot.image);
+            slot.loaded_crc32 = crc32(slot.image);
         }
         return slot.image;
     }
@@ -663,6 +669,7 @@ private:
         slot->loaded_words = (slot->loaded_size + 3) / 4;
         slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
         slot->loaded_checksum = fnv1a64(image);
+        slot->loaded_crc32 = crc32(image);
         sync_slot_table_size(*slot);
         ++slot->target_write_requests;
         slot->target_write_bytes += length;
@@ -736,6 +743,7 @@ private:
         slot->loaded_words = (slot->loaded_size + 3) / 4;
         slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
         slot->loaded_checksum = fnv1a64(slot->image);
+        slot->loaded_crc32 = crc32(slot->image);
         sync_slot_table_size(*slot);
         log_event("TARGET open-file id=" + std::to_string(slot_id) + " file=" + requested + " bytes=" + std::to_string(slot->loaded_size));
         return apf::kTargetOk;

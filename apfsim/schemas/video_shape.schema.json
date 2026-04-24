@@ -52,8 +52,22 @@
         "stable_dimensions": { "type": "boolean" },
         "protocol_valid": { "type": "boolean" },
         "frames_measured": { "type": "integer", "minimum": 0 },
+        "frames_considered": { "type": "integer", "minimum": 0 },
         "frames_completed": { "type": "integer", "minimum": 0 },
         "ignored_startup_frames": { "type": "integer", "minimum": 0 },
+        "startup_frames_ignored": { "type": "integer", "minimum": 0 },
+        "first_error_cycle": { "type": "integer", "minimum": 0 },
+        "first_error_frame": { "type": "integer", "minimum": 0 },
+        "first_error_pixel": { "type": "integer", "minimum": 0 },
+        "first_error_code": { "type": "string" },
+        "trace_window": {
+          "type": "object",
+          "properties": {
+            "start_cycle": { "type": "integer", "minimum": 0 },
+            "end_cycle": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        },
         "source_signals": {
           "type": "array",
           "items": { "type": "string" }

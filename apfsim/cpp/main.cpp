@@ -236,8 +236,18 @@ static void write_video_shape_object(std::ostream& out, const Scenario& scenario
     out << pad << "  \"stable_dimensions\": " << (stable_dimensions ? "true" : "false") << ",\n";
     out << pad << "  \"protocol_valid\": " << (protocol_valid ? "true" : "false") << ",\n";
     out << pad << "  \"frames_measured\": " << agg.frames << ",\n";
+    out << pad << "  \"frames_considered\": " << agg.frames << ",\n";
     out << pad << "  \"frames_completed\": " << video.frames_completed() << ",\n";
     out << pad << "  \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames << ",\n";
+    out << pad << "  \"startup_frames_ignored\": " << scenario.video_expect.ignore_startup_frames << ",\n";
+    out << pad << "  \"first_error_cycle\": " << video.first_error_cycle() << ",\n";
+    out << pad << "  \"first_error_frame\": " << video.first_error_frame() << ",\n";
+    out << pad << "  \"first_error_pixel\": " << video.first_error_pixel() << ",\n";
+    out << pad << "  \"first_error_code\": \"" << json_escape(video.first_error_code()) << "\",\n";
+    const uint64_t trace_start = video.first_error_cycle() > 2048 ? video.first_error_cycle() - 2048 : 0;
+    const uint64_t trace_end = video.first_error_cycle() ? video.first_error_cycle() + 2048 : 0;
+    out << pad << "  \"trace_window\": { \"start_cycle\": " << trace_start
+        << ", \"end_cycle\": " << trace_end << " },\n";
     out << pad << "  \"source_signals\": [\"video_rgb\", \"video_de\", \"video_hs\", \"video_vs\", \"video_skip\"]\n";
     out << pad << "}";
 }
@@ -384,6 +394,7 @@ static void write_result_json(
     const std::vector<ReadbackObservation>& readbacks,
     const std::vector<std::string>& failures,
     size_t interact_writes,
+    bool interact_verify_readback,
     uint64_t cycles_74a) {
     if (path.empty()) return;
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
@@ -401,6 +412,8 @@ static void write_result_json(
     const bool interact_ok = phase_has_no_failure(failures, "interact:");
     const bool input_ok = phase_has_no_failure(failures, "input:");
     const bool save_ok = phase_has_no_failure(failures, "save:");
+    uint64_t loaded_bytes_total = 0;
+    for (const auto& slot : slots) loaded_bytes_total += slot.loaded_size;
     out << "{\n";
     out << "  \"ok\": " << (ok ? "true" : "false") << ",\n";
     out << "  \"scenario\": \"" << json_escape(scenario.name) << "\",\n";
@@ -465,6 +478,7 @@ static void write_result_json(
             << "\", \"observed_last_write_address\": \"" << hex32(slot.observed_last_write_address)
             << "\", \"observed_write_address_errors\": " << slot.observed_write_address_errors
             << ", \"loaded_checksum\": \"" << hex64(slot.loaded_checksum) << "\""
+            << ", \"loaded_crc32\": \"" << hex32(slot.loaded_crc32) << "\""
             << ", \"expected_checksum\": ";
         if (slot.has_expected_checksum) out << "\"" << hex64(slot.expected_checksum) << "\"";
         else out << "null";
@@ -478,6 +492,29 @@ static void write_result_json(
             << ", \"target_flush_requests\": " << slot.target_flush_requests
             << ", \"target_filename_requests\": " << slot.target_filename_requests
             << ", \"target_open_requests\": " << slot.target_open_requests << " }";
+        out << (i + 1 == slots.size() ? "\n" : ",\n");
+    }
+    out << "  ] },\n";
+    out << "  \"data_load\": { \"done_seen\": " << (boot_trace.data_all_complete_cycle ? "true" : "false")
+        << ", \"done_cycle\": " << boot_trace.data_all_complete_cycle
+        << ", \"total_loaded_bytes\": " << loaded_bytes_total
+        << ", \"slots\": [\n";
+    for (size_t i = 0; i < slots.size(); ++i) {
+        const auto& slot = slots[i];
+        out << "    { \"id\": " << slot.id
+            << ", \"name\": \"" << json_escape(slot.name)
+            << "\", \"path\": \"" << json_escape(slot.file.string())
+            << "\", \"address\": \"" << hex32(slot.address)
+            << "\", \"loaded_bytes\": " << slot.loaded_size
+            << ", \"loaded_words\": " << slot.loaded_words
+            << ", \"crc\": \"" << hex32(slot.loaded_crc32)
+            << "\", \"checksum_fnv1a64\": \"" << hex64(slot.loaded_checksum)
+            << "\", \"required\": " << (slot.required ? "true" : "false")
+            << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
+            << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"observed_write_words\": " << slot.observed_write_words
+            << ", \"observed_write_address_errors\": " << slot.observed_write_address_errors
+            << ", \"done_seen\": " << ((slot.deferload || slot.file.empty() || slot.loaded_size > 0) ? "true" : "false") << " }";
         out << (i + 1 == slots.size() ? "\n" : ",\n");
     }
     out << "  ] },\n";
@@ -527,6 +564,7 @@ static void write_result_json(
         << ", \"frames_completed\": " << video.frames_completed()
         << ", \"frames_started\": " << video.frames_started()
         << ", \"validated_frames\": " << video_agg.frames
+        << ", \"frames_considered\": " << video_agg.frames
         << ", \"active_width\": " << meta.active_width
         << ", \"active_width_frame_min\": " << video_agg.active_width_min
         << ", \"active_width_frame_max\": " << video_agg.active_width_max
@@ -560,10 +598,21 @@ static void write_result_json(
         << ", \"hs_under_active_height_frames\": " << video_agg.hs_under_active_height_frames
         << ", \"errors\": " << validated_video_errors
         << ", \"raw_errors\": " << video.errors()
-        << ", \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames << " },\n";
+        << ", \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames
+        << ", \"startup_frames_ignored\": " << scenario.video_expect.ignore_startup_frames << " },\n";
     out << "  \"video_shape\": ";
     write_video_shape_object(out, scenario, video, 2);
     out << ",\n";
+    const uint64_t video_trace_start = video.first_error_cycle() > 2048 ? video.first_error_cycle() - 2048 : 0;
+    const uint64_t video_trace_end = video.first_error_cycle() ? video.first_error_cycle() + 2048 : 0;
+    out << "  \"video_protocol\": { \"valid\": " << (video_agg.total_errors == 0 ? "true" : "false")
+        << ", \"first_error_cycle\": " << video.first_error_cycle()
+        << ", \"first_error_frame\": " << video.first_error_frame()
+        << ", \"first_error_pixel\": " << video.first_error_pixel()
+        << ", \"first_error_code\": \"" << json_escape(video.first_error_code())
+        << "\", \"trace_window\": { \"start_cycle\": " << video_trace_start
+        << ", \"end_cycle\": " << video_trace_end << " }"
+        << ", \"source_signals\": [\"video_rgb\", \"video_de\", \"video_hs\", \"video_vs\", \"video_skip\"] },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
         << ", \"min_l\": " << astats.min_l
@@ -572,19 +621,64 @@ static void write_result_json(
         << ", \"max_r\": " << astats.max_r
         << ", \"peak_to_peak_l\": " << astats.peak_to_peak_l
         << ", \"peak_to_peak_r\": " << astats.peak_to_peak_r
+        << ", \"peak\": " << astats.peak
+        << ", \"nonzero_samples\": " << astats.nonzero_samples
+        << ", \"activity\": \"" << json_escape(astats.activity) << "\""
         << ", \"dc_offset_l\": " << astats.dc_offset_l
         << ", \"dc_offset_r\": " << astats.dc_offset_r
         << ", \"clipped_samples\": " << astats.clipped_samples
         << ", \"mclk_edges\": " << astats.mclk_edges
         << ", \"lrck_edges\": " << astats.lrck_edges
+        << ", \"mclk_seen\": " << (astats.mclk_seen ? "true" : "false")
+        << ", \"lrclk_seen\": " << (astats.lrclk_seen ? "true" : "false")
+        << ", \"stuck_sample\": " << (astats.stuck_sample ? "true" : "false")
         << ", \"lrck_half_period_mclk_min\": " << astats.lrck_half_period_mclk_min
         << ", \"lrck_half_period_mclk_max\": " << astats.lrck_half_period_mclk_max
         << ", \"avg_mclk_per_lrck_half_period\": " << astats.avg_mclk_per_lrck_half_period
         << ", \"estimated_mclk_lrck_ratio\": " << astats.estimated_mclk_lrck_ratio << " },\n";
-    out << "  \"interact\": { \"persistent_writes\": " << interact_writes << " },\n";
+    const bool interact_verified = interact_verify_readback && interact_writes > 0 && interact_ok;
+    const bool reset_action_seen = boot_trace.reset_enter_cycle != 0 && boot_trace.reset_exit_cycle != 0;
+    out << "  \"interact\": { \"persistent_writes\": " << interact_writes
+        << ", \"readback_enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"readback_verified\": " << (interact_verified ? "true" : "false") << " },\n";
+    out << "  \"interact_readback\": { \"enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"verified\": " << (interact_verified ? "true" : "false")
+        << ", \"persistent_writes\": " << interact_writes << " },\n";
+    out << "  \"reset_action_seen\": " << (reset_action_seen ? "true" : "false") << ",\n";
+    out << "  \"control_plane\": { \"interact_readback\": { \"enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"verified\": " << (interact_verified ? "true" : "false")
+        << ", \"persistent_writes\": " << interact_writes << " }, \"reset_action_seen\": "
+        << (reset_action_seen ? "true" : "false") << " },\n";
     out << "  \"input\": { \"scripted_events\": " << scenario.inputs.size()
         << ", \"delivered_events\": " << inputs.delivered_event_count()
-        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false") << " },\n";
+        << ", \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false")
+        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false")
+        << ", \"key_state\": { \"cont1_key\": \"" << hex32(inputs.key_state(1))
+        << "\", \"cont2_key\": \"" << hex32(inputs.key_state(2))
+        << "\", \"cont3_key\": \"" << hex32(inputs.key_state(3))
+        << "\", \"cont4_key\": \"" << hex32(inputs.key_state(4)) << "\" }, \"input_trace\": [\n";
+    for (size_t i = 0; i < inputs.events().size(); ++i) {
+        const auto& event = inputs.events()[i];
+        out << "    { \"frame\": " << event.frame
+            << ", \"player\": " << event.player
+            << ", \"button\": \"" << button_name(event.button)
+            << "\", \"hold_frames\": " << event.hold_frames
+            << ", \"delivered\": " << (inputs.event_delivered(i) ? "true" : "false") << " }";
+        out << (i + 1 == inputs.events().size() ? "\n" : ",\n");
+    }
+    out << "  ] },\n";
+    out << "  \"input_trace\": [\n";
+    for (size_t i = 0; i < inputs.events().size(); ++i) {
+        const auto& event = inputs.events()[i];
+        out << "    { \"frame\": " << event.frame
+            << ", \"player\": " << event.player
+            << ", \"button\": \"" << button_name(event.button)
+            << "\", \"hold_frames\": " << event.hold_frames
+            << ", \"delivered\": " << (inputs.event_delivered(i) ? "true" : "false") << " }";
+        out << (i + 1 == inputs.events().size() ? "\n" : ",\n");
+    }
+    out << "  ],\n";
+    out << "  \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false") << ",\n";
     out << "  \"save\": { \"reports\": [\n";
     for (size_t i = 0; i < save_reports.size(); ++i) {
         const auto& report = save_reports[i];
@@ -747,7 +841,7 @@ public:
         top_->clk_74b = clk_;
         inputs_->drive(top_);
         top_->eval();
-        video_->sample(top_);
+        video_->sample(top_, time_.cycles_74a);
         audio_->sample(top_);
 #if VM_TRACE
         if (trace_) trace_->dump(context_->time());
@@ -1229,7 +1323,7 @@ int main(int argc, char** argv) {
             write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
             std::vector<ReadbackObservation> readback_observations;
             std::vector<std::string> failures;
-            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, failures, interact_writes, sim.cycles_74a());
+            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, rc == 0, scenario, video);
             std::cout << "PASS play: frames=" << video.frames_completed() << " cycles_74a=" << sim.cycles_74a() << "\n";
             return rc;
@@ -1282,12 +1376,12 @@ int main(int argc, char** argv) {
         if (!asserts.ok()) {
             asserts.print();
             print_failure_diagnostics("assert", opt.result_json, video, audio, bridge, sim.cycles_74a());
-            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
+            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, false, scenario, video);
             return 1;
         }
 
-        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
+        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
         write_video_shape_json(opt.video_shape_json, opt.result_json, true, scenario, video);
         const auto& meta = video.last_metadata();
         const auto& astats = audio.stats();

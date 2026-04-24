@@ -112,6 +112,8 @@ The stable outputs are:
 
 This is the first layer of the porting-intelligence workflow. The goal is for tools and generators to consume diagnostic codes like `VIDEO_WIDTH_MISMATCH`, `DATA_SLOT_LOAD_SHORT`, or `READY_TO_RUN_MISSING` instead of scraping prose logs. See [Diagnostics And Bring-Up](docs/diagnostics.md).
 
+Agents implementing full-auto bring-up should use [Full-Auto Agent Guide](docs/full-auto-agent-guide.md). It maps the stable artifact fields for video shape, first protocol failure windows, control-plane probes, input smoke, audio activity, data loading, package validation, and shim provenance.
+
 ### Bring Up A Core
 
 `bringup` is the high-level command intended to grow into discover, profile generation, simulation, diagnosis, repair planning, and rerun:

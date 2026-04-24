@@ -58,6 +58,26 @@ inline uint32_t button_mask(Button b) {
     return 0;
 }
 
+inline const char* button_name(Button b) {
+    switch (b) {
+        case Button::Up: return "Up";
+        case Button::Down: return "Down";
+        case Button::Left: return "Left";
+        case Button::Right: return "Right";
+        case Button::A: return "A";
+        case Button::B: return "B";
+        case Button::X: return "X";
+        case Button::Y: return "Y";
+        case Button::L1: return "L1";
+        case Button::R1: return "R1";
+        case Button::L2: return "L2";
+        case Button::R2: return "R2";
+        case Button::Select: return "Select";
+        case Button::Start: return "Start";
+    }
+    return "Unknown";
+}
+
 struct InputEvent {
     uint64_t frame = 0;
     int player = 1;
@@ -78,6 +98,12 @@ public:
         return static_cast<size_t>(std::count(delivered_events_.begin(), delivered_events_.end(), true));
     }
     bool all_scripted_events_delivered() const { return delivered_event_count() == events_.size(); }
+    const std::vector<InputEvent>& events() const { return events_; }
+    bool event_delivered(size_t index) const { return index < delivered_events_.size() && delivered_events_[index]; }
+    uint32_t key_state(int player) const {
+        if (player < 1 || player > 4) return 0;
+        return keys_[player - 1] | (static_cast<uint32_t>(controller_type_[player - 1]) << 24);
+    }
 
     void set_button(int player, Button button, bool pressed) {
         if (player < 1 || player > 4) return;

@@ -666,6 +666,7 @@ def profile_video_metadata_path(profile: Profile) -> Path | None:
 
 def write_profile_diagnostics(profile: Profile, artifact_root: Path) -> dict[str, Any] | None:
     try:
+        write_source_provenance(profile, artifact_root)
         return write_diagnostics(
             artifact_root,
             profile=diagnostic_profile_raw(profile),
@@ -674,6 +675,46 @@ def write_profile_diagnostics(profile: Profile, artifact_root: Path) -> dict[str
     except Exception as exc:
         eprint(f"apfsim diagnostics warning: {exc}")
         return None
+
+
+def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, Any]:
+    shimmed_modules: list[dict[str, Any]] = []
+    for entry in profile.raw.get("shim_catalog_expanded", []):
+        if not isinstance(entry, dict):
+            continue
+        shimmed_modules.append({
+            "name": entry.get("name", ""),
+            "description": entry.get("description", ""),
+            "catalog_source": entry.get("catalog_source", ""),
+            "generated_files": entry.get("generated_files", 0),
+        })
+    generated_files = []
+    for item in profile.raw.get("generated_files", []):
+        if not isinstance(item, dict):
+            continue
+        generated_files.append({
+            "type": item.get("type", ""),
+            "source": str(resolve_path(item["source"], profile)) if item.get("source") else "",
+            "dest": str(resolve_path(item["dest"], profile)) if item.get("dest") else "",
+            "catalog_entry": item.get("catalog_entry", ""),
+        })
+    doc = {
+        "schema": "apfsim.source_provenance.v1",
+        "profile": profile.name,
+        "profile_path": str(profile.path),
+        "root": str(profile.root) if profile.root else "",
+        "top": profile.top,
+        "filelist": str(profile.filelist),
+        "shimmed_modules": shimmed_modules,
+        "generated_files": generated_files,
+        "sim_only_paths": [
+            path for path in profile.raw.get("required_paths", [])
+            if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)
+        ],
+    }
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    (artifact_root / "source_provenance.json").write_text(json.dumps(doc, indent=2) + "\n")
+    return doc
 
 
 def validate_runtime_artifacts(profile: Profile, artifact_root: Path) -> None:
@@ -974,8 +1015,15 @@ VIDEO_SHAPE_FIELDS = [
     "stable_dimensions",
     "protocol_valid",
     "frames_measured",
+    "frames_considered",
     "frames_completed",
     "ignored_startup_frames",
+    "startup_frames_ignored",
+    "first_error_cycle",
+    "first_error_frame",
+    "first_error_pixel",
+    "first_error_code",
+    "trace_window",
     "source_signals",
 ]
 

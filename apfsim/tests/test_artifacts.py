@@ -219,6 +219,7 @@ def test_public_schema_files_are_valid_json():
         "repair_plan.schema.json",
         "result.schema.json",
         "shim_catalog.schema.json",
+        "source_provenance.schema.json",
         "video_apply.schema.json",
         "video_compare.schema.json",
         "video_shape.schema.json",

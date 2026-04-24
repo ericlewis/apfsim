@@ -3,10 +3,12 @@
 #include "sim_time.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace apfsim {
@@ -25,6 +27,12 @@ struct AudioStats {
     int16_t max_r = 0;
     int32_t peak_to_peak_l = 0;
     int32_t peak_to_peak_r = 0;
+    int32_t peak = 0;
+    size_t nonzero_samples = 0;
+    bool mclk_seen = false;
+    bool lrclk_seen = false;
+    bool stuck_sample = false;
+    std::string activity = "no_mclk";
     double dc_offset_l = 0.0;
     double dc_offset_r = 0.0;
     size_t clipped_samples = 0;
@@ -122,13 +130,18 @@ private:
         s.samples = samples_.size();
         s.mclk_edges = mclk_edges_;
         s.lrck_edges = lrck_edges_;
+        s.mclk_seen = mclk_edges_ > 0;
+        s.lrclk_seen = lrck_edges_ > 0;
         s.lrck_half_period_mclk_min = lrck_half_period_mclk_min_;
         s.lrck_half_period_mclk_max = lrck_half_period_mclk_max_;
         if (lrck_half_periods_recorded_ > 0) {
             s.avg_mclk_per_lrck_half_period = static_cast<double>(lrck_half_period_total_) / static_cast<double>(lrck_half_periods_recorded_);
             s.estimated_mclk_lrck_ratio = s.avg_mclk_per_lrck_half_period * 2.0;
         }
-        if (samples_.empty()) return s;
+        if (samples_.empty()) {
+            s.activity = !s.mclk_seen ? "no_mclk" : (!s.lrclk_seen ? "no_lrclk" : "no_samples");
+            return s;
+        }
         int64_t sum_l = 0;
         int64_t sum_r = 0;
         s.min_l = s.min_r = std::numeric_limits<int16_t>::max();
@@ -138,6 +151,7 @@ private:
             s.max_l = std::max(s.max_l, sample.l);
             s.min_r = std::min(s.min_r, sample.r);
             s.max_r = std::max(s.max_r, sample.r);
+            if (sample.l != 0 || sample.r != 0) ++s.nonzero_samples;
             sum_l += sample.l;
             sum_r += sample.r;
             if (sample.l == std::numeric_limits<int16_t>::min() || sample.l == std::numeric_limits<int16_t>::max() ||
@@ -149,6 +163,16 @@ private:
         s.dc_offset_r = static_cast<double>(sum_r) / static_cast<double>(samples_.size());
         s.peak_to_peak_l = static_cast<int32_t>(s.max_l) - static_cast<int32_t>(s.min_l);
         s.peak_to_peak_r = static_cast<int32_t>(s.max_r) - static_cast<int32_t>(s.min_r);
+        s.peak = std::max({
+            std::abs(static_cast<int32_t>(s.min_l)),
+            std::abs(static_cast<int32_t>(s.max_l)),
+            std::abs(static_cast<int32_t>(s.min_r)),
+            std::abs(static_cast<int32_t>(s.max_r)),
+        });
+        s.stuck_sample = s.samples > 1 && s.peak_to_peak_l == 0 && s.peak_to_peak_r == 0 && s.nonzero_samples > 0;
+        if (s.nonzero_samples == 0) s.activity = "silence";
+        else if (s.stuck_sample) s.activity = "stuck_sample";
+        else s.activity = "active";
         return s;
     }
 
@@ -200,11 +224,17 @@ private:
         out << "  \"max_r\": " << stats_.max_r << ",\n";
         out << "  \"peak_to_peak_l\": " << stats_.peak_to_peak_l << ",\n";
         out << "  \"peak_to_peak_r\": " << stats_.peak_to_peak_r << ",\n";
+        out << "  \"peak\": " << stats_.peak << ",\n";
+        out << "  \"nonzero_samples\": " << stats_.nonzero_samples << ",\n";
+        out << "  \"activity\": \"" << stats_.activity << "\",\n";
         out << "  \"dc_offset_l\": " << stats_.dc_offset_l << ",\n";
         out << "  \"dc_offset_r\": " << stats_.dc_offset_r << ",\n";
         out << "  \"clipped_samples\": " << stats_.clipped_samples << ",\n";
         out << "  \"mclk_edges\": " << stats_.mclk_edges << ",\n";
         out << "  \"lrck_edges\": " << stats_.lrck_edges << ",\n";
+        out << "  \"mclk_seen\": " << (stats_.mclk_seen ? "true" : "false") << ",\n";
+        out << "  \"lrclk_seen\": " << (stats_.lrclk_seen ? "true" : "false") << ",\n";
+        out << "  \"stuck_sample\": " << (stats_.stuck_sample ? "true" : "false") << ",\n";
         out << "  \"lrck_half_period_mclk_min\": " << stats_.lrck_half_period_mclk_min << ",\n";
         out << "  \"lrck_half_period_mclk_max\": " << stats_.lrck_half_period_mclk_max << ",\n";
         out << "  \"avg_mclk_per_lrck_half_period\": " << stats_.avg_mclk_per_lrck_half_period << ",\n";

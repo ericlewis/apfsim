@@ -29,6 +29,7 @@ struct DataSlot {
     uint32_t observed_last_write_address = 0;
     uint64_t observed_write_address_errors = 0;
     uint64_t loaded_checksum = 0;
+    uint32_t loaded_crc32 = 0;
     uint64_t expected_checksum = 0;
     bool has_expected_checksum = false;
     std::vector<uint8_t> image;
@@ -48,6 +49,17 @@ inline uint64_t fnv1a64(const std::vector<uint8_t>& bytes) {
         hash *= 1099511628211ull;
     }
     return hash;
+}
+
+inline uint32_t crc32(const std::vector<uint8_t>& bytes) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (const auto byte : bytes) {
+        crc ^= static_cast<uint32_t>(byte);
+        for (int i = 0; i < 8; ++i) {
+            crc = (crc >> 1) ^ (0xEDB88320u & static_cast<uint32_t>(-static_cast<int32_t>(crc & 1u)));
+        }
+    }
+    return ~crc;
 }
 
 inline std::string json_string_field(const std::string& object, const std::string& key) {
