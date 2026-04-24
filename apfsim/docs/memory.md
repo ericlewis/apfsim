@@ -119,9 +119,9 @@ Do not enable this blindly for write-only loader windows. If a real core can loa
 
 It is not a Pocket-accurate SDRAM timing model. A pass with this model should be reported as `bringup_only` confidence, not hardware confidence.
 
-`rtl_shims/external_memory_models.sv` also provides `apfsim_sdram_pin_model`, a public SDRAM pin-bus model for generated wrappers that preserve SDRAM pins. It models basic ACTIVE/READ/WRITE/PRECHARGE/REFRESH command flow, bank/row selection, DQM byte masking, CAS-latency read return, and bus-contention/error counters. This is stronger than a compile stub because it observes real pin-level traffic, but it is still a bring-up model, not a cycle-accurate Pocket SDRAM timing replacement.
+`rtl_shims/external_memory_models.sv` also provides `apfsim_sdram_pin_model`, a public SDRAM pin-bus model for generated wrappers that preserve SDRAM pins. It models basic ACTIVE/READ/WRITE/PRECHARGE/REFRESH command flow, bank/row selection, DQM byte masking, CAS-latency read return, and bus-contention/error counters. It can also accept a ROM preload/coverage sideband from a generated wrapper. This is stronger than a compile stub because it observes real pin-level traffic, but it is still a bring-up model, not a cycle-accurate Pocket SDRAM timing replacement.
 
-Generated JTFRAME logical wrappers instantiate this model when public Pocket exports expose SDRAM pins and record:
+Generated JTFRAME logical wrappers instantiate this model when public Pocket exports expose SDRAM pins. They feed JTFRAME's internal `prog_we`/`prog_addr`/`prog_data`/`prog_mask`/`prog_ba` programming sideband into the model as expected ROM coverage and record:
 
 ```json
 {
@@ -140,14 +140,19 @@ Generated JTFRAME logical wrappers instantiate this model when public Pocket exp
 }
 ```
 
-After a run, `memory_activity.json.observed` should be `true` if the wrapper exposes the standard SDRAM counters and the C++ harness was built with SDRAM counter capture.
+After a run, `memory_activity.json.observed` should be `true` if the wrapper exposes the standard SDRAM counters and the C++ harness was built with SDRAM counter capture. With ROM coverage enabled:
+
+- `sdram_rom_preload_count` counts expected ROM words seen on the programming sideband.
+- `sdram_rom_coverage_gap_count` counts reads outside the ROM-backed coverage map. This is useful for identifying partial or wrong ROM payloads without treating every dummy smoke file as physical SDRAM corruption.
+- `sdram_rom_unwritten_read_count` is a hard error: the core read a ROM-backed address before the physical SDRAM write path made that word valid.
+- `sdram_rom_mismatch_count` is a hard error: physical SDRAM data differed from the expected ROM-backed word at a read address.
 
 ## External RAM Direction
 
 The first external RAM model library is `rtl_shims/external_memory_models.sv`:
 
 - `apfsim_async_sram_16_model`: async 16-bit SRAM pin model with `CE/OE/WE/LB/UB`, activity counters, byte-enable checks, and contention detection.
-- `apfsim_sdram_pin_model`: SDRAM pin-bus bring-up model with command, refresh, byte-enable, uninitialized-read, and bus-contention counters.
+- `apfsim_sdram_pin_model`: SDRAM pin-bus bring-up model with command, refresh, byte-enable, ROM coverage/preload, uninitialized-read, mismatch, and bus-contention counters.
 - `apfsim_transactional_ram_model`: request/ack RAM model with configurable latency, byte enables, overrun detection, and read/write counters.
 - `apfsim_psram_like_model`: 16-bit latency-configurable transactional wrapper.
 - `apfsim_cram_like_model`: 16-bit latency-configurable transactional wrapper.
@@ -248,9 +253,17 @@ output wire [31:0] apfsim_sdram_read_count,
 output wire [31:0] apfsim_sdram_write_count,
 output wire [31:0] apfsim_sdram_activate_count,
 output wire [31:0] apfsim_sdram_refresh_count,
+output wire [31:0] apfsim_sdram_rom_preload_count,
+output wire [31:0] apfsim_sdram_rom_coverage_gap_count,
+output wire [31:0] apfsim_sdram_rom_mismatch_count,
+output wire [31:0] apfsim_sdram_rom_unwritten_read_count,
+output wire [23:0] apfsim_sdram_first_coverage_gap_addr,
+output wire [23:0] apfsim_sdram_first_rom_mismatch_addr,
+output wire [23:0] apfsim_sdram_first_rom_unwritten_read_addr,
 output wire        apfsim_sdram_command_error,
 output wire        apfsim_sdram_bus_contention_error,
 output wire        apfsim_sdram_byte_enable_error,
+output wire        apfsim_sdram_rom_mismatch_error,
 output wire        apfsim_sdram_uninitialized_read_error
 ```
 
@@ -271,7 +284,9 @@ Live counter errors are promoted into stable diagnostics:
 - `SRAM_BUS_CONTENTION`: SRAM model observed simultaneous output/read drive conflict.
 - `MEMORY_BUS_CONTENTION`: external RAM model observed conflicting bus drivers.
 - `MEMORY_BYTE_ENABLE_MISMATCH`: byte-enable pins were invalid for a write.
-- `MEMORY_UNINITIALIZED_READ`: model returned bytes that were never written or initialized.
+- `MEMORY_UNINITIALIZED_READ`: model observed a read from an expected ROM-backed word before that word was physically written, or an unbacked read before any ROM coverage was known.
+- `MEMORY_ROM_WRITE_MISMATCH`: physical SDRAM data differed from the expected ROM-backed programming-sideband data.
+- `MEMORY_ROM_COVERAGE_GAP`: model observed reads outside ROM-backed coverage. This usually means the smoke run used an incomplete ROM payload, not that physical SDRAM corrupted a known word.
 - `MEMORY_STALL_TIMEOUT`: transactional memory request arrived while the model was busy/overrun.
 - `SDRAM_COMMAND_ERROR`: SDRAM model observed invalid command sequencing, such as read/write without an open row.
 - `MEMORY_NO_ACTIVITY`: counters were observed but read/write counts stayed zero during a data-loaded run.
@@ -292,6 +307,8 @@ Preferred diagnostics for future models:
 - `MEMORY_WIDTH_MISMATCH`
 - `MEMORY_BYTE_ENABLE_MISMATCH`
 - `MEMORY_UNINITIALIZED_READ`
+- `MEMORY_ROM_WRITE_MISMATCH`
+- `MEMORY_ROM_COVERAGE_GAP`
 - `MEMORY_OUT_OF_RANGE`
 - `MEMORY_NO_ACTIVITY`
 - `MEMORY_STALL_TIMEOUT`

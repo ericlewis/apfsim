@@ -101,6 +101,44 @@
       "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
     },
     {
+      "name": "jtframe_t48_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the T48/MCS-48 core when sound boards instantiate t48_core.",
+      "modules": ["t48_core"],
+      "detect": {
+        "source_patterns": ["\\bt48_core\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "{root}/../modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "{root}/../../modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/t48/t48_core.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
+    },
+    {
+      "name": "jtframe_t8243_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the 8243 expander when sound boards instantiate t8243_sync_notri.",
+      "modules": ["t8243_sync_notri"],
+      "detect": {
+        "source_patterns": ["\\bt8243_sync_notri\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "{root}/../modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "{root}/../../modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
+    },
+    {
       "name": "vlm5030_public_translation",
       "kind": "translated_rtl",
       "confidence": "public_translation",
@@ -183,7 +221,7 @@
       },
       "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
       "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
-      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_BYTE_ENABLE_MISMATCH", "MEMORY_BUS_CONTENTION", "MEMORY_UNINITIALIZED_READ", "SDRAM_COMMAND_ERROR", "SDRAM_REFRESH_MISSING"]
+      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_BYTE_ENABLE_MISMATCH", "MEMORY_BUS_CONTENTION", "MEMORY_UNINITIALIZED_READ", "MEMORY_ROM_WRITE_MISMATCH", "MEMORY_ROM_COVERAGE_GAP", "SDRAM_COMMAND_ERROR", "SDRAM_REFRESH_MISSING"]
     },
     {
       "name": "external_sram_pin_model",

@@ -211,6 +211,65 @@ def test_diagnostics_surface_live_memory_counter_errors(tmp_path):
     assert item["evidence"][0]["artifact"] == "memory_activity.json"
 
 
+def test_diagnostics_explain_sdram_rom_write_mismatch(tmp_path):
+    artifacts = tmp_path / "run"
+    write_json(artifacts / "result.json", passing_result())
+    write_json(artifacts / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "observed": True,
+        "counter_status": "observed",
+        "counters": [
+            {
+                "name": "sdram_rom_mismatch_count",
+                "class": "sdram",
+                "value": 1,
+                "error": True,
+                "error_code": "MEMORY_ROM_WRITE_MISMATCH",
+            },
+            {"name": "sdram_first_rom_mismatch_addr", "class": "sdram", "value": 4660, "error": False},
+        ],
+        "errors": [
+            {
+                "code": "MEMORY_ROM_WRITE_MISMATCH",
+                "severity": "error",
+                "counter": "sdram_rom_mismatch_count",
+                "class": "sdram",
+                "value": 1,
+                "observed": True,
+            }
+        ],
+    })
+
+    doc = diagnose_artifacts(artifacts)
+
+    item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_ROM_WRITE_MISMATCH")
+    assert item["phase"] == "memory"
+    assert "external SDRAM write path corrupted ROM-backed bytes" in item["likely_causes"]
+    assert "bank/address packing" in item["repairs"][0]["description"]
+
+
+def test_diagnostics_warn_on_sdram_rom_coverage_gap(tmp_path):
+    artifacts = tmp_path / "run"
+    write_json(artifacts / "result.json", passing_result())
+    write_json(artifacts / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "observed": True,
+        "counter_status": "observed",
+        "counters": [
+            {"name": "sdram_rom_coverage_gap_count", "class": "sdram", "value": 3, "error": False},
+            {"name": "sdram_first_coverage_gap_addr", "class": "sdram", "value": 12582912, "error": False},
+        ],
+        "errors": [],
+    })
+
+    doc = diagnose_artifacts(artifacts)
+
+    item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_ROM_COVERAGE_GAP")
+    assert item["severity"] == "warning"
+    assert item["observed"]["first_addr"] == 12582912
+    assert any("setup or message asset" in cause for cause in item["likely_causes"])
+
+
 def test_diagnostics_warn_when_observed_memory_counters_stay_idle_during_load(tmp_path):
     artifacts = tmp_path / "run"
     result = passing_result()

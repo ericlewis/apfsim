@@ -44,6 +44,8 @@ Current public entries cover:
 - FIFO primitives: `intel_fifo_shims`
 - common LPM arithmetic: `intel_lpm_arithmetic`
 - JTFRAME T80s public translation/fallback strategy: `jtframe_t80s_public_translation`
+- JTFRAME T48/MCS-48 public translation: `jtframe_t48_public_translation`
+- JTFRAME 8243 expander public translation: `jtframe_t8243_public_translation`
 - idealized request/ack SDRAM: `sdram_ideal_transactional`
 - pin-level SDRAM bring-up model: `sdram_pin_model`
 - async external SRAM model library: `external_sram_pin_model`
@@ -56,5 +58,6 @@ JTFRAME policy:
 - `jtframe_t80s_public_translation` first searches for `modules/jtframe/hdl/cpu/t80/T80s.v` under the core root, parent roots, or `$JTCORES_ROOT`.
 - If the translated public RTL exists, it is added to the generated filelist and the detail record has `fallback_used: false`.
 - If it does not exist, `rtl_shims/jtframe_t80s_stub.sv` is used only as an explicit compile-only fallback. Treat any passing run with that fallback as shell/profile validation, not gameplay validation.
+- `jtframe_t48_public_translation` and `jtframe_t8243_public_translation` similarly select JTFRAME's public Verilog CPU/expander translations for sound boards that otherwise appear as VHDL-only `t48_core`/`t8243_sync_notri` dependencies to Verilator.
 - QSF top `pocket_top` plus public `jtframe_pocket` enables generated logical-wrapper mode. The wrapper replaces the physical Pocket shell, adapts the bridge directly, emits one-cycle APF HS/VS pulses, and exposes video at `video_pxl_cen` cadence so video-shape discovery sees the real active width.
-- Generated JTFRAME logical-wrapper mode wires `sdram_pin_model` when SDRAM pins are present. A useful pass should show `memory_activity.observed: true` with nonzero SDRAM read/write/activate/refresh counters and zero command/contention/byte-enable errors.
+- Generated JTFRAME logical-wrapper mode wires `sdram_pin_model` when SDRAM pins are present. A useful pass should show `memory_activity.observed: true` with nonzero SDRAM read/write/activate/refresh counters, nonzero `sdram_rom_preload_count` for ROM-loaded runs, zero command/contention/byte-enable errors, and zero ROM mismatch/unwritten-read counts.

@@ -762,9 +762,17 @@ def maybe_generate_jtframe_pocket_wrapper(qsf_project: QsfProject, profile_dir: 
                 "apfsim_sdram_write_count",
                 "apfsim_sdram_activate_count",
                 "apfsim_sdram_refresh_count",
+                "apfsim_sdram_rom_preload_count",
+                "apfsim_sdram_rom_coverage_gap_count",
+                "apfsim_sdram_rom_mismatch_count",
+                "apfsim_sdram_rom_unwritten_read_count",
+                "apfsim_sdram_first_coverage_gap_addr",
+                "apfsim_sdram_first_rom_mismatch_addr",
+                "apfsim_sdram_first_rom_unwritten_read_addr",
                 "apfsim_sdram_command_error",
                 "apfsim_sdram_bus_contention_error",
                 "apfsim_sdram_byte_enable_error",
+                "apfsim_sdram_rom_mismatch_error",
                 "apfsim_sdram_uninitialized_read_error",
             ],
             "confidence": "pin_level_bringup",
@@ -819,9 +827,17 @@ module core_top (
     output wire [31:0] apfsim_sdram_write_count,
     output wire [31:0] apfsim_sdram_activate_count,
     output wire [31:0] apfsim_sdram_refresh_count,
+    output wire [31:0] apfsim_sdram_rom_preload_count,
+    output wire [31:0] apfsim_sdram_rom_coverage_gap_count,
+    output wire [31:0] apfsim_sdram_rom_mismatch_count,
+    output wire [31:0] apfsim_sdram_rom_unwritten_read_count,
+    output wire [23:0] apfsim_sdram_first_coverage_gap_addr,
+    output wire [23:0] apfsim_sdram_first_rom_mismatch_addr,
+    output wire [23:0] apfsim_sdram_first_rom_unwritten_read_addr,
     output wire        apfsim_sdram_command_error,
     output wire        apfsim_sdram_bus_contention_error,
     output wire        apfsim_sdram_byte_enable_error,
+    output wire        apfsim_sdram_rom_mismatch_error,
     output wire        apfsim_sdram_uninitialized_read_error
 );
 `ifdef JTFRAME_COLORW
@@ -847,6 +863,12 @@ module core_top (
     wire        sdram_ncs;
     wire        sdram_clk;
     wire        sdram_cke;
+    wire        apfsim_rom_preload_clk;
+    wire        apfsim_rom_preload_we;
+    wire [23:0] apfsim_rom_preload_prog_addr;
+    wire [23:0] apfsim_rom_preload_addr;
+    wire [15:0] apfsim_rom_preload_data;
+    wire [1:0]  apfsim_rom_preload_dqm;
 
     wire [COLORW-1:0] core_r;
     wire [COLORW-1:0] core_g;
@@ -916,6 +938,13 @@ module core_top (
         .pocket_debug_flags(core_debug_flags)
     );
 
+    assign apfsim_rom_preload_clk = u_core.clk_sys;
+    assign apfsim_rom_preload_we = u_core.prog_we;
+    assign apfsim_rom_preload_prog_addr = 24'(u_core.prog_addr);
+    assign apfsim_rom_preload_addr = {u_core.prog_ba, apfsim_rom_preload_prog_addr[21:0]};
+    assign apfsim_rom_preload_data = u_core.prog_data;
+    assign apfsim_rom_preload_dqm = u_core.prog_mask;
+
     apfsim_sdram_pin_model #(
         .ADDR_WIDTH(24),
         .COL_WIDTH(9),
@@ -932,13 +961,26 @@ module core_top (
         .Cas_n(sdram_ncas),
         .We_n(sdram_nwe),
         .Dqm({sdram_dqmh, sdram_dqml}),
+        .preload_clk(apfsim_rom_preload_clk),
+        .preload_we(apfsim_rom_preload_we),
+        .preload_addr(apfsim_rom_preload_addr),
+        .preload_data(apfsim_rom_preload_data),
+        .preload_dqm(apfsim_rom_preload_dqm),
         .read_count(apfsim_sdram_read_count),
         .write_count(apfsim_sdram_write_count),
         .activate_count(apfsim_sdram_activate_count),
         .refresh_count(apfsim_sdram_refresh_count),
+        .preload_count(apfsim_sdram_rom_preload_count),
+        .coverage_gap_count(apfsim_sdram_rom_coverage_gap_count),
+        .rom_mismatch_count(apfsim_sdram_rom_mismatch_count),
+        .rom_unwritten_read_count(apfsim_sdram_rom_unwritten_read_count),
+        .first_coverage_gap_addr(apfsim_sdram_first_coverage_gap_addr),
+        .first_rom_mismatch_addr(apfsim_sdram_first_rom_mismatch_addr),
+        .first_rom_unwritten_read_addr(apfsim_sdram_first_rom_unwritten_read_addr),
         .command_error(apfsim_sdram_command_error),
         .bus_contention_error(apfsim_sdram_bus_contention_error),
         .byte_enable_error(apfsim_sdram_byte_enable_error),
+        .rom_mismatch_error(apfsim_sdram_rom_mismatch_error),
         .uninitialized_read_error(apfsim_sdram_uninitialized_read_error)
     );
 

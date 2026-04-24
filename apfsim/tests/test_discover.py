@@ -344,12 +344,20 @@ def test_generate_profile_selects_public_jtframe_t80_and_ddio_shims(tmp_path):
         " output RD_n, output WR_n, output RFSH_n, output HALT_n, output BUSAK_n,"
         " output [15:0] A, output [7:0] DOUT); endmodule\n"
     )
+    jt_t48 = core / "modules" / "jtframe" / "hdl" / "cpu" / "t48" / "t48_core.v"
+    jt_t48.parent.mkdir(parents=True)
+    jt_t48.write_text("module t48_core(input reset_i, input clk_i); endmodule\n")
+    jt_t8243 = core / "modules" / "jtframe" / "hdl" / "cpu" / "t8243" / "t8243_sync_notri.v"
+    jt_t8243.parent.mkdir(parents=True)
+    jt_t8243.write_text("module t8243_sync_notri(input clk_i); endmodule\n")
     (fpga_dir / "core" / "pocket_top.sv").write_text(
         "module pocket_top(input refclk);"
         " wire [1:0] clocks; wire locked; wire [0:0] ddio_out;"
         " altera_pll #(.number_of_clocks(2)) pll(.refclk(refclk), .rst(1'b0), .outclk(clocks), .locked(locked), .fboutclk(), .fbclk(1'b0));"
         " altddio_out #(.width(1)) ddio(.datain_h(1'b1), .datain_l(1'b0), .outclock(refclk), .outclocken(1'b1), .aset(1'b0), .aclr(1'b0), .sset(1'b0), .sclr(1'b0), .oe(1'b1), .dataout(ddio_out), .oe_out());"
         " T80s cpu(.RESET_n(1'b1), .CLK(refclk), .CEN(1'b1), .WAIT_n(1'b1), .INT_n(1'b1), .NMI_n(1'b1), .BUSRQ_n(1'b1), .OUT0(1'b0), .DI(8'h00));"
+        " t48_core mcu(.reset_i(1'b1), .clk_i(refclk));"
+        " t8243_sync_notri expander(.clk_i(refclk));"
         " endmodule\n"
     )
     (fpga_dir / "ap_core.qsf").write_text(
@@ -377,9 +385,15 @@ def test_generate_profile_selects_public_jtframe_t80_and_ddio_shims(tmp_path):
     assert "intel_pllbase_sim" in candidate["selected_shims"]
     assert "intel_ddio_shims" in candidate["selected_shims"]
     assert "jtframe_t80s_public_translation" in candidate["selected_shims"]
+    assert "jtframe_t48_public_translation" in candidate["selected_shims"]
+    assert "jtframe_t8243_public_translation" in candidate["selected_shims"]
     assert details["jtframe_t80s_public_translation"]["fallback_used"] is False
     assert details["jtframe_t80s_public_translation"]["catalog_source"] == "{root}/modules/jtframe/hdl/cpu/t80/T80s.v"
+    assert details["jtframe_t48_public_translation"]["catalog_source"] == "{root}/modules/jtframe/hdl/cpu/t48/t48_core.v"
+    assert details["jtframe_t8243_public_translation"]["catalog_source"] == "{root}/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v"
     assert "{root}/modules/jtframe/hdl/cpu/t80/T80s.v" in filelist
+    assert "{root}/modules/jtframe/hdl/cpu/t48/t48_core.v" in filelist
+    assert "{root}/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v" in filelist
     assert "rtl_shims/jtframe_t80s_stub.sv" not in filelist
 
 
@@ -426,6 +440,8 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert "video_rgb_clock <= core_pxl_cen" in wrapper_text
     assert "apfsim_sdram_pin_model" in wrapper_text
     assert "apfsim_sdram_read_count" in wrapper_text
+    assert "apfsim_sdram_rom_preload_count" in wrapper_text
+    assert "u_core.prog_we" in wrapper_text
     assert "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv" in filelist
     assert "rtl_shims/external_memory_models.sv" in filelist
     assert "{root}/src/fpga/core/pocket_top.sv" not in filelist
@@ -434,3 +450,4 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert profile["memory"]["models"]["sdram"]["selected"] == "sdram_pin_level"
     assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["top"] == "core_top"
     assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["class"] == "sdram"
+    assert "apfsim_sdram_rom_mismatch_count" in candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["counter_ports"]

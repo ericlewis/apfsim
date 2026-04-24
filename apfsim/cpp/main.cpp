@@ -219,10 +219,18 @@ static MemoryActivitySnapshot capture_memory_activity(Top* top) {
     snapshot.counters.push_back({"sdram_write_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_write_count), false, ""});
     snapshot.counters.push_back({"sdram_activate_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_activate_count), false, ""});
     snapshot.counters.push_back({"sdram_refresh_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_refresh_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_preload_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_preload_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_coverage_gap_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_coverage_gap_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_mismatch_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_mismatch_count), top->apfsim_sdram_rom_mismatch_count != 0, "MEMORY_ROM_WRITE_MISMATCH"});
+    snapshot.counters.push_back({"sdram_rom_unwritten_read_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_unwritten_read_count), top->apfsim_sdram_rom_unwritten_read_count != 0, "MEMORY_UNINITIALIZED_READ"});
+    snapshot.counters.push_back({"sdram_first_coverage_gap_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_coverage_gap_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_read_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_read_addr), false, ""});
     snapshot.counters.push_back({"sdram_command_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_command_error), top->apfsim_sdram_command_error != 0, "SDRAM_COMMAND_ERROR"});
     snapshot.counters.push_back({"sdram_bus_contention_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_bus_contention_error), top->apfsim_sdram_bus_contention_error != 0, "MEMORY_BUS_CONTENTION"});
     snapshot.counters.push_back({"sdram_byte_enable_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_byte_enable_error), top->apfsim_sdram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
-    snapshot.counters.push_back({"sdram_uninitialized_read_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_uninitialized_read_error), top->apfsim_sdram_uninitialized_read_error != 0, "MEMORY_UNINITIALIZED_READ"});
+    snapshot.counters.push_back({"sdram_rom_mismatch_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_mismatch_error), false, ""});
+    snapshot.counters.push_back({"sdram_uninitialized_read_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_uninitialized_read_error), false, ""});
 #endif
     return snapshot;
 }

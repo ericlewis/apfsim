@@ -48,6 +48,8 @@ KNOWN_CODES = (
     "MEMORY_WIDTH_MISMATCH",
     "MEMORY_BYTE_ENABLE_MISMATCH",
     "MEMORY_UNINITIALIZED_READ",
+    "MEMORY_ROM_WRITE_MISMATCH",
+    "MEMORY_ROM_COVERAGE_GAP",
     "MEMORY_OUT_OF_RANGE",
     "MEMORY_BUS_CONTENTION",
     "MEMORY_NO_ACTIVITY",
@@ -1072,6 +1074,42 @@ def _memory_counter_error_code(counter: dict[str, Any]) -> str:
     return "MEMORY_MODEL_REQUIRED"
 
 
+def _memory_error_likely_causes(code: str) -> list[str]:
+    if code == "MEMORY_ROM_WRITE_MISMATCH":
+        return [
+            "external SDRAM write path corrupted ROM-backed bytes",
+            "SDRAM address, bank, or byte-lane mapping differs from the JTFRAME programming sideband",
+            "download byte swapping or data mask handling is wrong",
+        ]
+    if code == "MEMORY_UNINITIALIZED_READ":
+        return [
+            "core read a ROM-backed SDRAM address before the physical SDRAM write landed",
+            "data-slot payload did not cover a region the core expects to execute or render from",
+            "SDRAM address mapping dropped or shifted a programmed ROM word",
+        ]
+    if code == "SDRAM_COMMAND_ERROR":
+        return [
+            "SDRAM controller issued READ/WRITE without an active row",
+            "generated wrapper connected SDRAM command pins with wrong polarity",
+            "pin-level model does not match this controller's command sequencing",
+        ]
+    return [
+        "external RAM byte lanes, address bits, or control strobes are miswired",
+        "memory controller accepted a request while busy or stalled",
+        "wrapper exposes a memory model error flag from SRAM/PSRAM/CRAM/SDRAM",
+    ]
+
+
+def _memory_error_repair_description(code: str) -> str:
+    if code == "MEMORY_ROM_WRITE_MISMATCH":
+        return "Compare the SDRAM ROM preload sideband against physical SDRAM writes; inspect bank/address packing, byte-lane masks, and download byte swapping."
+    if code == "MEMORY_UNINITIALIZED_READ":
+        return "Check whether the ROM/data-slot image is complete, then trace the first ROM-backed unwritten read address through the SDRAM programming and address mapper."
+    if code == "SDRAM_COMMAND_ERROR":
+        return "Inspect SDRAM command pin polarity and row/bank activation timing in the generated wrapper and pin-level model."
+    return "Trace the named counter back to the memory model and inspect address, byte-enable, OE/WE, and request/ack timing."
+
+
 def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict[str, Any], result: dict[str, Any]) -> None:
     if not memory_activity:
         return
@@ -1102,16 +1140,12 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
             },
             expected={"memory_error_counters": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/errors/{index}"}],
-            likely_causes=[
-                "external RAM byte lanes, address bits, or control strobes are miswired",
-                "memory controller accepted a request while busy or stalled",
-                "wrapper exposes a memory model error flag from SRAM/PSRAM/CRAM",
-            ],
+            likely_causes=_memory_error_likely_causes(code),
             repairs=[
                 {
                     "kind": "wrapper_patch",
                     "confidence": 0.73,
-                    "description": "Inspect the wrapper wiring for the named memory counter and compare it with the core's external RAM bus timing.",
+                    "description": _memory_error_repair_description(code),
                 }
             ],
         )
@@ -1137,16 +1171,55 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
             },
             expected={"counter_value": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],
-            likely_causes=[
-                "external RAM bus contention or invalid byte-enable use",
-                "request/ack transactional model was overrun",
-                "bridge data-load writes are reaching a memory model error path",
-            ],
+            likely_causes=_memory_error_likely_causes(code),
             repairs=[
                 {
                     "kind": "memory_model",
                     "confidence": 0.76,
-                    "description": "Trace the named counter back to the memory model and inspect address, byte-enable, OE/WE, and request/ack timing.",
+                    "description": _memory_error_repair_description(code),
+                }
+            ],
+        )
+
+    for index, counter in enumerate(counters):
+        name = str(counter.get("name") or "")
+        if name != "sdram_rom_coverage_gap_count":
+            continue
+        value = _as_int(counter.get("value"), 0)
+        if value <= 0:
+            continue
+        first_addr = next(
+            (
+                _as_int(item.get("value"), 0)
+                for item in counters
+                if isinstance(item, dict) and str(item.get("name") or "") == "sdram_first_coverage_gap_addr"
+            ),
+            0,
+        )
+        _diag(
+            items,
+            code="MEMORY_ROM_COVERAGE_GAP",
+            phase="memory",
+            severity="warning",
+            summary="SDRAM model observed reads outside ROM-backed coverage.",
+            observed={
+                "counter": name,
+                "class": counter.get("class"),
+                "value": value,
+                "first_addr": first_addr,
+            },
+            expected={"coverage_gap_count": 0},
+            evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],
+            likely_causes=[
+                "ROM/data-slot payload is incomplete for this core",
+                "scenario selected a setup or message asset instead of the full game ROM",
+                "JTFRAME programming address-to-SDRAM mapping needs a stronger family rule",
+            ],
+            repairs=[
+                {
+                    "kind": "scenario_or_profile_fix",
+                    "confidence": 0.72,
+                    "description": "Use the full expected ROM payload or add a family-specific ROM coverage mapping before treating SDRAM reads as fully verified.",
                 }
             ],
         )
