@@ -11,6 +11,7 @@ A profile run writes a stable artifact directory. Important files:
 - `bridge.log`: human-readable APF command and data-slot flow.
 - `bridge_summary.json`: bridge counters and command history.
 - `source_provenance.json`: profile root, generated files, sim-only paths, and shim catalog provenance.
+- `source_provenance.json.memory_dependencies`: detected memory classes, evidence, model confidence, and risks.
 - `package_check.json`: package metadata and SD-card path validation, schema `apfsim.package_check.v1`.
 - `summary.json`: normalized per-run row for corpus and generator consumption, schema `apfsim.run_summary.v1`.
 - `summary.tsv`: one-row tab-separated form of `summary.json.row`.

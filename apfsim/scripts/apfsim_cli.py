@@ -710,6 +710,18 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
             "dest": str(resolve_path(item["dest"], profile)) if item.get("dest") else "",
             "catalog_entry": item.get("catalog_entry", ""),
         })
+    memory_dependencies = profile.raw.get("memory") if isinstance(profile.raw.get("memory"), dict) else {}
+    memory_models = []
+    for cls, model in dict(memory_dependencies.get("models", {})).items():
+        if not isinstance(model, dict):
+            continue
+        memory_models.append({
+            "class": str(cls),
+            "model": str(model.get("selected", "")),
+            "confidence": str(model.get("confidence", "")),
+            "source": str(model.get("source", "")),
+            "notes": str(model.get("notes", "")),
+        })
     doc = {
         "schema": "apfsim.source_provenance.v1",
         "profile": profile.name,
@@ -719,6 +731,8 @@ def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, 
         "filelist": str(profile.filelist),
         "shimmed_modules": shimmed_modules,
         "generated_files": generated_files,
+        "memory_dependencies": memory_dependencies,
+        "memory_models": memory_models,
         "sim_only_paths": [
             path for path in profile.raw.get("required_paths", [])
             if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)

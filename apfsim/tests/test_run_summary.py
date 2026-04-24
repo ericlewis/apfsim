@@ -51,6 +51,19 @@ def make_artifacts(root: Path):
     write_json(root / "source_provenance.json", {
         "schema": "apfsim.source_provenance.v1",
         "shimmed_modules": [{"name": "altsyncram_sim"}],
+        "memory_dependencies": {
+            "schema": "apfsim.memory_dependencies.v1",
+            "required": True,
+            "classes": ["sdram", "bram"],
+            "external_classes": ["sdram"],
+            "models": {
+                "sdram": {"selected": "ideal_transactional", "confidence": "bringup_only", "source": "rtl_shims/sdram_sim.sv"}
+            },
+            "risks": [{"code": "SDRAM_TIMING_NOT_POCKET_LIKE", "severity": "warning"}],
+        },
+        "memory_models": [
+            {"class": "sdram", "model": "ideal_transactional", "confidence": "bringup_only", "source": "rtl_shims/sdram_sim.sv"}
+        ],
     })
 
 
@@ -69,6 +82,9 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["audio_activity"] == "active"
     assert row["data_crc_list"] == ["0x12345678"]
     assert row["shimmed_modules"] == ["altsyncram_sim"]
+    assert row["memory_classes"] == ["sdram", "bram"]
+    assert row["memory_models"] == ["sdram:ideal_transactional"]
+    assert row["memory_risks"] == ["SDRAM_TIMING_NOT_POCKET_LIKE"]
 
 
 def test_write_summary_emits_json_and_tsv(tmp_path):

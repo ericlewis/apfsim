@@ -216,6 +216,7 @@ def test_public_schema_files_are_valid_json():
         "diagnostic.schema.json",
         "generated_profile.schema.json",
         "lifecycle.schema.json",
+        "memory_dependencies.schema.json",
         "package_check.schema.json",
         "profile.schema.json",
         "repair_plan.schema.json",

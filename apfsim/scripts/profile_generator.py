@@ -147,6 +147,8 @@ def generate_profile_candidate(
     }
     if selected_shims:
         profile["shim_catalog"] = selected_shims
+    if inv.memory.get("required"):
+        profile["memory"] = inv.memory
     profile_sources = qsf_project.sources if qsf_project.sources else hdl_paths(root)
     if any(path.suffix == ".sv" for path in profile_sources):
         profile["verilator_flags"] = ["--sv"]
@@ -177,6 +179,7 @@ def generate_profile_candidate(
             "notes": str(notes_path),
         },
         "warnings": warnings,
+        "memory": inv.memory,
         "qsf": qsf_payload,
         "inventory": inv.__dict__,
     }
@@ -685,8 +688,9 @@ def generation_warnings(
             warnings.append("QSF references QIP/IP files; verify corresponding Verilator shims or public implementations")
     if inv.vhdl_files:
         warnings.append("VHDL files were detected; generated Verilog profile may need public stubs or mixed-language strategy")
-    if inv.uses_sdram or inv.uses_ddr:
-        warnings.append("SDRAM/DDR usage detected; verify behavioral memory model and timing expectations")
+    for risk in inv.memory.get("risks", []):
+        if isinstance(risk, dict) and risk.get("code"):
+            warnings.append(f"{risk['code']}: {risk.get('message', 'memory model risk')}")
     if not selected_shims and (inv.uses_pll or inv.uses_altsyncram or inv.uses_dcfifo or inv.qip_files):
         warnings.append("vendor/IP usage detected; filelist includes generic shims but may need catalog entries")
     if not any(line.endswith("core_top.sv") or line.endswith("core_top.v") for line in filelist_lines):

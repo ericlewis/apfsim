@@ -32,10 +32,13 @@ When a Quartus `.qsf` is present, the generated filelist is QSF-aware:
 
 `candidate.json.qsf` is the machine-readable provenance report. It includes the QSF path, QSF/QIP-expanded source counts, emitted defines, include paths, VHDL/QIP references, missing sources, and filtered/replaced source entries.
 
+Generated candidates also include memory dependency intelligence when HDL references known RAM classes. The profile `memory` object and `candidate.json.memory` use schema `apfsim.memory_dependencies.v1` and report classes such as `sdram`, `sram`, `psram`, `cram`, `bram`, and `fifo`, selected model confidence, evidence, and risks. See [Memory Dependencies And External RAM](memory.md).
+
 Review checklist:
 
 - Confirm the selected ROM asset is the intended one. Filename matching is best-effort when package `data.json` names do not exactly match local asset filenames.
 - Confirm `filelist.f` excludes vendor generated IP and includes any required generated shim files.
+- Confirm memory dependencies are modeled honestly. `sdram` currently uses an idealized bring-up model; `sram`, `psram`, `cram`, and `ddr` require explicit external RAM model work for hardware-confidence simulation.
 - Confirm the QSF-derived order matches the intended Quartus compile order, especially for packages, macro-controlled source variants, and framework files.
 - Confirm `scenario.yml` uses the intended data-slot IDs, addresses, save files, and expected video dimensions.
 - Run preflight before building:

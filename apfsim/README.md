@@ -295,6 +295,7 @@ A run writes a stable artifact directory. Important files:
 - `package_check.json`: package metadata and SD-card path validation.
 - `summary.json` / `summary.tsv`: normalized one-row output for corpus and generator consumption.
 - `corpus_summary.json` / `corpus_summary.tsv`: aggregate output from `corpus run`.
+- `source_provenance.json.memory_dependencies`: detected SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence.
 - `video_shape.json`: APF-facing runtime video contract.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers.
 - `bridge.log`: human-readable APF command and data-slot flow.
@@ -396,6 +397,7 @@ If a core uses different names or widths, add a thin simulation wrapper and set 
 - [Runtime Video Contract Discovery](docs/video-shape.md)
 - [Generated Profile Candidates](docs/generated-profiles.md)
 - [Shim And Substitution Catalog](docs/shim-catalog.md)
+- [Memory Dependencies And External RAM](docs/memory.md)
 - [Log-Derived APF Runtime Flows](docs/log-derived-flows.md)
 - [Public Readiness Notes](docs/public-readiness.md)
 

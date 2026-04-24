@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from memory_intel import analyze_memory_sources, risk_codes
+
 
 DEFAULT_DISCOVERY_ROOTS = [
     Path(item)
@@ -52,6 +54,13 @@ class CoreInventory:
     uses_dcfifo: bool = False
     uses_sdram: bool = False
     uses_ddr: bool = False
+    uses_sram: bool = False
+    uses_psram: bool = False
+    uses_cram: bool = False
+    uses_bram: bool = False
+    memory_classes: list[str] = field(default_factory=list)
+    memory_risks: list[str] = field(default_factory=list)
+    memory: dict[str, Any] = field(default_factory=dict)
     apf_ports: list[str] = field(default_factory=list)
     missing_apf_ports: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -250,6 +259,7 @@ def inspect_metadata(root: Path, inv: CoreInventory) -> None:
 def inspect_sources(root: Path, inv: CoreInventory) -> None:
     source_roots = [path for path in [root / "src" / "fpga", root / "src" / "core", root / "target" / "pocket"] if path.exists()]
     text_samples: list[str] = []
+    memory_sources: list[tuple[Path, str]] = []
     for source_root in source_roots:
         for path in source_root.rglob("*"):
             if not path.is_file():
@@ -265,7 +275,9 @@ def inspect_sources(root: Path, inv: CoreInventory) -> None:
                 inv.qip_files += 1
             if suffix in {".sv", ".v", ".vh", ".svh"} and len(text_samples) < 200:
                 try:
-                    text_samples.append(path.read_text(errors="ignore")[:200000])
+                    text = path.read_text(errors="ignore")[:200000]
+                    text_samples.append(text)
+                    memory_sources.append((path, text))
                 except OSError:
                     pass
     text = "\n".join(text_samples)
@@ -275,6 +287,15 @@ def inspect_sources(root: Path, inv: CoreInventory) -> None:
     inv.uses_dcfifo = "dcfifo" in text
     inv.uses_sdram = "sdram" in lower_text
     inv.uses_ddr = any(token in lower_text for token in ["ddr_", " ddr", "\nddr", "ddram", "lpddr"])
+    inv.memory = analyze_memory_sources(memory_sources)
+    inv.memory_classes = list(inv.memory.get("classes", []))
+    inv.memory_risks = risk_codes(inv.memory)
+    inv.uses_sdram = inv.uses_sdram or "sdram" in inv.memory_classes
+    inv.uses_ddr = inv.uses_ddr or "ddr" in inv.memory_classes
+    inv.uses_sram = "sram" in inv.memory_classes
+    inv.uses_psram = "psram" in inv.memory_classes
+    inv.uses_cram = "cram" in inv.memory_classes
+    inv.uses_bram = "bram" in inv.memory_classes
 
     top_text = ""
     for rel in inv.top_files[:2]:
@@ -305,9 +326,9 @@ def classify(inv: CoreInventory) -> None:
     elif inv.vhdl_files:
         inv.status = "needs-vhdl-shims"
         inv.action = "add Verilog sim stubs or generated wrappers for VHDL-only blocks"
-    elif inv.uses_sdram or inv.uses_ddr:
+    elif inv.uses_sdram or inv.uses_ddr or inv.uses_sram or inv.uses_psram or inv.uses_cram:
         inv.status = "needs-memory-model"
-        inv.action = "add transactional SDRAM/DDR model before expecting gameplay frames"
+        inv.action = "select or implement external memory model before expecting hardware-confidence gameplay frames"
     elif inv.uses_pll or inv.uses_altsyncram or inv.uses_dcfifo or inv.qip_files:
         inv.status = "needs-ip-shims"
         inv.action = "verify existing RTL shims cover vendor IP, then generate filelist/profile"
@@ -409,14 +430,15 @@ def render_markdown(report: dict[str, Any]) -> str:
     for core in sorted(candidates, key=lambda item: (priority.get(item["status"], 9), item["name"]))[:30]:
         ids = ", ".join(core["core_ids"]) or "-"
         video = ", ".join(core["video_modes"]) or "-"
-        lines.append(f"- `{core['name']}` ({core['status']}, git={core.get('git_state', 'unknown')}): ids={ids}; video={video}; action={core['action']}")
+        memory = ", ".join(core.get("memory_classes", [])) or "-"
+        lines.append(f"- `{core['name']}` ({core['status']}, git={core.get('git_state', 'unknown')}): ids={ids}; video={video}; memory={memory}; action={core['action']}")
 
     lines.extend([
         "",
         "## All Cores",
         "",
-        "| Core | IDs | Profiles | Status | Git | Video | Data Slots | HDL | Action |",
-        "| --- | --- | --- | --- | --- | --- | ---: | --- | --- |",
+        "| Core | IDs | Profiles | Status | Git | Video | Memory | Data Slots | HDL | Action |",
+        "| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |",
     ])
     for core in sorted(report["cores"], key=lambda item: (item["source_root"], item["name"])):
         ids = "<br>".join(core["core_ids"]) or "-"
@@ -427,11 +449,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         if dirty_count:
             git = f"{git} ({dirty_count})"
         hdl = f"sv={core['sv_files']} v={core['v_files']} vhdl={core['vhdl_files']}"
+        memory = ", ".join(core.get("memory_classes", [])) or "-"
         action = core["action"].replace("|", "/")
         root_link = core["root"]
         lines.append(
             f"| `{core['name']}`<br>`{root_link}` | {ids} | {profiles} | `{core['status']}` | `{git}` | {video} | "
-            f"{core['data_slot_count']} | {hdl} | {action} |"
+            f"{memory} | {core['data_slot_count']} | {hdl} | {action} |"
         )
     lines.append("")
     return "\n".join(lines)

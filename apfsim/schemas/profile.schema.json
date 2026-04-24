@@ -67,6 +67,10 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "memory": {
+      "description": "Detected memory dependencies and selected sim model confidence.",
+      "type": "object"
+    },
     "generated_files": { "type": "array" }
   },
   "additionalProperties": true

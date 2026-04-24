@@ -113,6 +113,41 @@ def test_generate_profile_writes_reviewable_candidate(tmp_path):
     assert str(core) not in scenario
 
 
+def test_generate_profile_reports_memory_dependencies(tmp_path):
+    core = tmp_path / "openFPGA-MemoryCore"
+    write_fake_core(core, name="MemoryCore")
+    rtl_dir = core / "src" / "fpga" / "core"
+    (rtl_dir / "memory_glue.sv").write_text(
+        "module memory_glue;"
+        " sdram sdram_inst();"
+        " wire [15:0] SRAM_DQ;"
+        " wire CRAM_WAIT;"
+        " altsyncram bram_inst();"
+        " dcfifo fifo_inst();"
+        "endmodule\n"
+    )
+    out = tmp_path / "generated"
+
+    r = subprocess.run([
+        str(CLI),
+        "generate-profile",
+        "--root", str(core),
+        "--output", str(out),
+        "--json",
+    ], cwd=ROOT, text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    report = json.loads(r.stdout)
+    candidate = json.loads(Path(report["paths"]["report"]).read_text())
+    profile = json.loads(Path(report["paths"]["profile"]).read_text())
+    assert candidate["memory"]["schema"] == "apfsim.memory_dependencies.v1"
+    assert set(candidate["memory"]["classes"]) >= {"sdram", "sram", "cram", "bram", "fifo"}
+    assert set(candidate["memory"]["external_classes"]) >= {"sdram", "sram", "cram"}
+    assert "CRAM_MODEL_REQUIRED" in {risk["code"] for risk in candidate["memory"]["risks"]}
+    assert profile["memory"]["models"]["sdram"]["selected"] == "ideal_transactional"
+    assert any("CRAM_MODEL_REQUIRED" in warning for warning in candidate["warnings"])
+
+
 def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
     core = tmp_path / "openFPGA-QsfCore"
     write_fake_core(core, name="QsfCore")

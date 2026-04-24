@@ -28,6 +28,9 @@ TSV_COLUMNS = [
     "interact_readback_verified",
     "reset_action_seen",
     "shimmed_modules",
+    "memory_classes",
+    "memory_models",
+    "memory_risks",
     "artifact_dir",
 ]
 
@@ -97,6 +100,19 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
     input_doc = _obj(result.get("input"))
     interact_readback = _obj(result.get("interact_readback"))
     shimmed = [str(item.get("name")) for item in _list(provenance.get("shimmed_modules")) if isinstance(item, dict) and item.get("name")]
+    memory_doc = _obj(provenance.get("memory_dependencies"))
+    memory_models_doc = [item for item in _list(provenance.get("memory_models")) if isinstance(item, dict)]
+    memory_classes = [str(item) for item in _list(memory_doc.get("classes"))]
+    memory_models = [
+        f"{item.get('class')}:{item.get('model')}"
+        for item in memory_models_doc
+        if item.get("class") and item.get("model")
+    ]
+    memory_risks = [
+        str(item.get("code"))
+        for item in _list(memory_doc.get("risks"))
+        if isinstance(item, dict) and item.get("code")
+    ]
     data_slots = [slot for slot in _list(data_load.get("slots")) if isinstance(slot, dict)]
     data_crc_list = [str(slot.get("crc")) for slot in data_slots if slot.get("crc")]
 
@@ -132,6 +148,9 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "interact_readback_verified": _as_bool(interact_readback.get("verified"), False),
         "reset_action_seen": _as_bool(result.get("reset_action_seen"), False),
         "shimmed_modules": shimmed,
+        "memory_classes": memory_classes,
+        "memory_models": memory_models,
+        "memory_risks": memory_risks,
         "artifact_dir": str(artifact_dir),
     }
     return {
@@ -170,6 +189,8 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         },
         "source_provenance": {
             "shimmed_modules": shimmed,
+            "memory_dependencies": memory_doc,
+            "memory_models": memory_models_doc,
         },
     }
 

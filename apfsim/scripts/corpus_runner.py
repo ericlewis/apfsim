@@ -38,6 +38,9 @@ TSV_COLUMNS = [
     "loaded_bytes_total",
     "data_crc_list",
     "shimmed_modules",
+    "memory_classes",
+    "memory_models",
+    "memory_risks",
     "artifact_dir",
     "run_dir",
     "skip_reason",
@@ -353,6 +356,9 @@ def base_row(core: dict[str, Any], idx: int, name: str, core_out: Path, manifest
         "blocking_codes": [],
         "warning_codes": [],
         "package_ok": None,
+        "memory_classes": [],
+        "memory_models": [],
+        "memory_risks": [],
         "artifact_dir": str(core_out),
         "run_dir": str(core_out / "run"),
         "summary_path": "",
@@ -441,6 +447,9 @@ def apply_run_summary(row: dict[str, Any], summary: dict[str, Any]) -> None:
         "loaded_bytes_total",
         "data_crc_list",
         "shimmed_modules",
+        "memory_classes",
+        "memory_models",
+        "memory_risks",
     ]:
         if key in summary_row:
             row[key] = summary_row[key]

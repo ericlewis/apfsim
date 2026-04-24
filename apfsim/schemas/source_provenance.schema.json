@@ -38,6 +38,21 @@
         "additionalProperties": true
       }
     },
+    "memory_dependencies": { "type": "object" },
+    "memory_models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": { "type": "string" },
+          "model": { "type": "string" },
+          "confidence": { "type": "string" },
+          "source": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
     "sim_only_paths": { "type": "array", "items": { "type": "string" } }
   },
   "additionalProperties": true
