@@ -17,7 +17,7 @@ Generated bundle:
 - `<output>/<name>/NOTES.md`: review notes and suggested commands.
 - `<output>/<name>/candidate.json`: machine-readable generation report.
 
-The generator uses `discover`-style metadata to find `core_top`, package JSON files, assets, video modes, and likely blockers. It also applies the shim/substitution catalog when a known pattern is detected, for example Time Pilot's generated T80 wrapper and local source substitutions.
+The generator uses `discover`-style metadata to find `core_top`, package JSON files, assets, video modes, and likely blockers. It also applies the shim/substitution catalog when a known public pattern is detected, for example a reusable vendor RAM or PLL substitution.
 
 When a Quartus `.qsf` is present, the generated filelist is QSF-aware:
 

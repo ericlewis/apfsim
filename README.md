@@ -1,6 +1,6 @@
 # pocket_sim
 
-This workspace contains `apfsim`, a Verilator APF/Pocket host emulator scaffold for running Analogue Pocket `core_top` modules locally.
+This workspace contains `apfsim`, a deterministic Verilator-based APF contract simulator for testing Analogue Pocket `core_top` integration locally.
 
 Start with:
 

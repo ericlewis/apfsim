@@ -1,6 +1,6 @@
 # APF Contract Coverage
 
-This document is the working APF contract used by `pocket_sim` regression gates. It is intentionally concise: public Analogue documentation remains the source of truth, while this file records what the simulator enforces.
+This document is the working APF contract used by `apfsim` regression gates. It is intentionally concise: public Analogue documentation remains the source of truth, while this file records what the simulator enforces.
 
 ## Runtime Harness
 
