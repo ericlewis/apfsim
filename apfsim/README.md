@@ -58,6 +58,7 @@ cd apfsim
 bin/apfsim doctor
 bin/apfsim build --profile mock
 bin/apfsim run --profile mock --frames 2
+bin/apfsim diagnose build/profiles/mock/run
 bin/apfsim test --matrix ci
 ```
 
@@ -93,6 +94,48 @@ A passing run does not prove:
 Hardware remains the final authority. `apfsim` is intended to catch integration failures earlier and make failures reproducible.
 
 ## Core Workflows
+
+### Diagnose A Run
+
+Every profile run now emits a diagnostic layer on top of raw simulator artifacts:
+
+```sh
+bin/apfsim run --profile mock_port_gate
+bin/apfsim diagnose build/profiles/mock_port_gate/run --profile mock_port_gate --strict
+```
+
+The stable outputs are:
+
+- `diagnostics.json`: machine-readable APF contract failures with stable codes, evidence pointers, likely causes, and repair suggestions.
+- `bringup-report.md`: a practical human report with blocking diagnostics, recommended next action, artifact paths, and hardware-confidence summary.
+- `repair-plan.json`: optional reviewable repair suggestions from `bin/apfsim bringup --repair`.
+
+This is the first layer of the porting-intelligence workflow. The goal is for tools and generators to consume diagnostic codes like `VIDEO_WIDTH_MISMATCH`, `DATA_SLOT_LOAD_SHORT`, or `READY_TO_RUN_MISSING` instead of scraping prose logs. See [Diagnostics And Bring-Up](docs/diagnostics.md).
+
+### Bring Up A Core
+
+`bringup` is the high-level command intended to grow into discover, profile generation, simulation, diagnosis, repair planning, and rerun:
+
+```sh
+bin/apfsim bringup \
+  --profile mock_port_gate \
+  --out output/bringup/mock_port_gate \
+  --repair \
+  --emit-patches
+```
+
+For generated candidates:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --auto-profile \
+  --rom /path/to/game.rom \
+  --out output/bringup/core-name \
+  --repair
+```
+
+Automatic source mutation is intentionally not performed. Repair output is patch-plan first; source patches will be emitted only by explicit repair rules.
 
 ### Run The Deterministic Mock Profile
 
@@ -184,6 +227,9 @@ Use this when generated `video.json` says one size but simulated APF output prov
 A run writes a stable artifact directory. Important files:
 
 - `result.json`: top-level run status, phase status, boot/data/bridge/video/audio/input/save summaries.
+- `diagnostics.json`: stable APF contract diagnostics with evidence and repair suggestions.
+- `bringup-report.md`: human-readable bring-up summary.
+- `repair-plan.json`: optional reviewable repair suggestions from `bringup --repair`.
 - `video_shape.json`: APF-facing runtime video contract.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers.
 - `bridge.log`: human-readable APF command and data-slot flow.

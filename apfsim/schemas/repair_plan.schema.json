@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/repair_plan.schema.json",
+  "title": "apfsim repair plan",
+  "type": "object",
+  "required": ["schema", "artifact_dir", "automatic_apply", "patches_emitted", "repairs"],
+  "properties": {
+    "schema": { "const": "apfsim.repair_plan.v1" },
+    "artifact_dir": { "type": "string" },
+    "automatic_apply": { "type": "boolean" },
+    "patches_emitted": { "type": "boolean" },
+    "patches_dir": { "type": "string" },
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "confidence", "description", "diagnostic_code"],
+        "properties": {
+          "kind": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "description": { "type": "string" },
+          "diagnostic_code": { "type": "string" },
+          "phase": { "type": "string" },
+          "severity": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

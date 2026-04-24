@@ -3,6 +3,9 @@
 A profile run writes a stable artifact directory. Important files:
 
 - `result.json`: top-level run status, phase status, boot/data/bridge/video/audio/input/save summaries.
+- `diagnostics.json`: stable APF contract diagnostics, schema `apfsim.diagnostics.v1`.
+- `bringup-report.md`: concise human-readable blocking/non-blocking bring-up report.
+- `repair-plan.json`: optional repair suggestions from `bringup --repair`, schema `apfsim.repair_plan.v1`.
 - `video_shape.json`: APF-facing shape contract, schema `apfsim.video_shape.v1`.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers, schema `apfsim.lifecycle.v1`.
 - `bridge.log`: human-readable APF command and data-slot flow.
@@ -23,6 +26,12 @@ Validate an existing run:
 
 ```sh
 bin/apfsim validate-artifacts path/to/run-dir
+```
+
+Classify an existing run into diagnostics:
+
+```sh
+bin/apfsim diagnose path/to/run-dir --strict
 ```
 
 Public JSON schemas live in `schemas/*.schema.json`. These schemas are intentionally permissive for additive fields but strict about the stable contract keys used by downstream tools.

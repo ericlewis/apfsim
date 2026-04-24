@@ -212,9 +212,11 @@ def test_public_schema_files_are_valid_json():
     schema_dir = ROOT / "schemas"
     expected = {
         "bridge_summary.schema.json",
+        "diagnostic.schema.json",
         "generated_profile.schema.json",
         "lifecycle.schema.json",
         "profile.schema.json",
+        "repair_plan.schema.json",
         "result.schema.json",
         "shim_catalog.schema.json",
         "video_apply.schema.json",

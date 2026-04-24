@@ -15,6 +15,7 @@ from typing import Any
 
 from artifact_validator import ArtifactValidationError, annotate_result_phases, validate_artifacts
 from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
+from diagnostics import write_diagnostics
 from log_analyzer import analyze_logs, write_json_report
 from profile_generator import generate_profile_candidate
 
@@ -546,10 +547,14 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
     print_completed(proc)
     if proc.returncode != 0:
         annotate_result_phases(artifact_root)
+        write_profile_diagnostics(profile, artifact_root)
         print_failure_hint(artifact_root)
     else:
-        validate_runtime_artifacts(profile, artifact_root)
-        validate_expected_artifacts(profile, artifact_root)
+        try:
+            validate_runtime_artifacts(profile, artifact_root)
+            validate_expected_artifacts(profile, artifact_root)
+        finally:
+            write_profile_diagnostics(profile, artifact_root)
     return proc.returncode
 
 def cmd_play(args: argparse.Namespace) -> int:
@@ -636,11 +641,39 @@ def cmd_play(args: argparse.Namespace) -> int:
         return 124
     if proc.returncode != 0:
         annotate_result_phases(artifact_root)
+        write_profile_diagnostics(profile, artifact_root)
         print_failure_hint(artifact_root)
     else:
-        validate_runtime_artifacts(profile, artifact_root)
+        try:
+            validate_runtime_artifacts(profile, artifact_root)
+        finally:
+            write_profile_diagnostics(profile, artifact_root)
         print(f"apfsim play artifacts: {artifact_root}")
     return proc.returncode
+
+
+def diagnostic_profile_raw(profile: Profile) -> dict[str, Any]:
+    raw = dict(profile.raw)
+    if profile.root:
+        raw.setdefault("root", str(profile.root))
+    return raw
+
+
+def profile_video_metadata_path(profile: Profile) -> Path | None:
+    video_metadata = dict(profile.raw.get("metadata_jsons", {})).get("video")
+    return resolve_path(video_metadata, profile) if video_metadata else None
+
+
+def write_profile_diagnostics(profile: Profile, artifact_root: Path) -> dict[str, Any] | None:
+    try:
+        return write_diagnostics(
+            artifact_root,
+            profile=diagnostic_profile_raw(profile),
+            video_metadata_path=profile_video_metadata_path(profile),
+        )
+    except Exception as exc:
+        eprint(f"apfsim diagnostics warning: {exc}")
+        return None
 
 
 def validate_runtime_artifacts(profile: Profile, artifact_root: Path) -> None:
@@ -679,12 +712,158 @@ def cmd_validate_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diagnose(args: argparse.Namespace) -> int:
+    artifact_root = resolve_user_path(args.artifact_dir)
+    profile_raw: dict[str, Any] | None = None
+    video_metadata_path = resolve_user_path(args.video_json) if args.video_json else None
+    if args.profile:
+        profile = load_profile(args.profile)
+        profile_raw = diagnostic_profile_raw(profile)
+        if video_metadata_path is None:
+            video_metadata_path = profile_video_metadata_path(profile)
+    doc = write_diagnostics(artifact_root, profile=profile_raw, video_metadata_path=video_metadata_path)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        summary = doc["summary"]
+        print(
+            "diagnostics: "
+            f"status={doc['status']} "
+            f"errors={summary['errors']} "
+            f"warnings={summary['warnings']} "
+            f"infos={summary['infos']}"
+        )
+        for item in doc["diagnostics"]:
+            print(f"{item['severity'].upper()} {item['code']}: {item['summary']}")
+        print(f"artifacts: {artifact_root}")
+    return 1 if args.strict and doc["summary"]["errors"] else 0
+
+
+def cmd_bringup(args: argparse.Namespace) -> int:
+    if not args.profile and not (args.root and args.auto_profile):
+        raise ApfSimError("bringup requires --profile or --root with --auto-profile", phase="bringup")
+
+    out = resolve_user_path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    profile: Profile
+    generated_payload: dict[str, Any] | None = None
+    if args.root and args.auto_profile:
+        root = resolve_user_path(args.root)
+        generated_dir = out / "generated-profile"
+        generated = generate_profile_candidate(
+            root,
+            generated_dir,
+            apfsim_dir=APFSIM_DIR,
+            profile_name=args.name,
+            catalog_path=resolve_user_path(args.catalog) if args.catalog else DEFAULT_SHIM_CATALOG,
+            force=True,
+        )
+        raw = load_json(generated.profile_path)
+        raw["root"] = str(root)
+        name = str(raw.get("name") or generated.profile_path.stem)
+        raw = expand_profile_shim_catalog(raw, name)
+        profile = Profile(name=name, path=generated.profile_path, raw=raw, root=root)
+        generated_payload = {
+            "schema": "apfsim.bringup_profile.v1",
+            "profile": name,
+            "root": str(root),
+            "paths": {
+                "profile": str(generated.profile_path),
+                "filelist": str(generated.filelist_path),
+                "scenario": str(generated.scenario_path),
+                "notes": str(generated.notes_path),
+                "report": str(generated.report_path),
+            },
+            "selected_shims": generated.selected_shims,
+            "warnings": generated.warnings,
+        }
+        (out / "profile.generated.json").write_text(json.dumps(generated_payload, indent=2) + "\n")
+    else:
+        profile = load_profile(args.profile)
+
+    slots = list(args.slot or [])
+    if args.rom:
+        slots.append(f"{args.rom_slot_id}={resolve_user_path(args.rom)}")
+    run_args = argparse.Namespace(**vars(args))
+    run_args.profile = profile.name
+    run_args.slot = slots
+    run_args.artifacts = str(args.artifacts or (out / "run"))
+    run_args.clean_artifacts = args.clean_artifacts
+    rc = run_profile(run_args, profile)
+
+    artifact_root = resolve_path(run_args.artifacts, profile)
+    diagnostics_path = artifact_root / "diagnostics.json"
+    diagnostics_doc = load_json(diagnostics_path) if diagnostics_path.exists() else {}
+    if args.repair or args.emit_patches:
+        write_repair_plan(artifact_root, diagnostics_doc, emit_patches=args.emit_patches)
+
+    first_error = first_diagnostic_code(diagnostics_doc, severity="error")
+    if rc != 0 or first_error:
+        print(f"FAIL {first_error or 'BRINGUP_FAILED'}")
+    else:
+        print("PASS bringup")
+    print(f"artifacts: {artifact_root}")
+    if generated_payload:
+        print(f"generated profile: {generated_payload['paths']['profile']}")
+    return rc if rc != 0 else (1 if first_error else 0)
+
+
+def first_diagnostic_code(doc: dict[str, Any], *, severity: str) -> str:
+    for item in doc.get("diagnostics", []):
+        if isinstance(item, dict) and item.get("severity") == severity:
+            return str(item.get("code") or "")
+    return ""
+
+
+def write_repair_plan(artifact_root: Path, diagnostics_doc: dict[str, Any], *, emit_patches: bool = False) -> None:
+    repairs: list[dict[str, Any]] = []
+    for diagnostic in diagnostics_doc.get("diagnostics", []):
+        if not isinstance(diagnostic, dict):
+            continue
+        for repair in diagnostic.get("repairs", []):
+            if not isinstance(repair, dict):
+                continue
+            item = dict(repair)
+            item["diagnostic_code"] = diagnostic.get("code")
+            item["phase"] = diagnostic.get("phase")
+            item["severity"] = diagnostic.get("severity")
+            repairs.append(item)
+    plan = {
+        "schema": "apfsim.repair_plan.v1",
+        "artifact_dir": str(artifact_root),
+        "automatic_apply": False,
+        "patches_emitted": False,
+        "repairs": repairs,
+    }
+    if emit_patches:
+        patches_dir = artifact_root / "patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+        readme = patches_dir / "README.md"
+        readme.write_text(
+            "# apfsim patches\n\n"
+            "This bring-up run produced repair suggestions, but this slice only emits a reviewable repair plan. "
+            "Source patches are intentionally not synthesized until the matching repair rule is implemented.\n",
+            encoding="utf-8",
+        )
+        plan["patches_dir"] = str(patches_dir)
+    (artifact_root / "repair-plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+
 def print_failure_hint(artifact_root: Path) -> None:
     result = artifact_root / "result.json"
     if result.exists():
         try:
             data = json.loads(result.read_text())
             eprint(f"apfsim failure phase={data.get('failed_phase', '')} message={data.get('message', '')}")
+        except json.JSONDecodeError:
+            pass
+    diagnostics = artifact_root / "diagnostics.json"
+    if diagnostics.exists():
+        try:
+            data = json.loads(diagnostics.read_text())
+            code = first_diagnostic_code(data, severity="error")
+            if code:
+                eprint(f"apfsim diagnostic={code}")
         except json.JSONDecodeError:
             pass
     eprint(f"apfsim artifacts: {artifact_root}")
@@ -1397,6 +1576,21 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_args(run)
     run.set_defaults(func=lambda ns: run_profile(ns, load_profile(ns.profile)))
 
+    bringup = sub.add_parser("bringup", help="discover/profile/run/diagnose one APF core bring-up")
+    bringup.add_argument("--profile", help="existing apfsim profile name or path")
+    bringup.add_argument("--root", help="Pocket core checkout root")
+    bringup.add_argument("--auto-profile", action="store_true", help="generate a reviewable profile candidate before running")
+    bringup.add_argument("--name", help="generated profile name when using --auto-profile")
+    bringup.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")
+    bringup.add_argument("--rom", help="ROM/asset file to bind to --rom-slot-id")
+    bringup.add_argument("--rom-slot-id", type=int, default=1, help="data slot id used for --rom; default 1")
+    bringup.add_argument("--out", required=True, help="bring-up artifact directory")
+    bringup.add_argument("--repair", action="store_true", help="emit repair-plan.json from diagnostics")
+    bringup.add_argument("--explain", action="store_true", help="reserved for verbose diagnostic explanations")
+    bringup.add_argument("--emit-patches", action="store_true", help="create patches/ when repair rules can emit reviewable patches")
+    add_run_args(bringup, include_profile=False)
+    bringup.set_defaults(func=cmd_bringup)
+
     play = sub.add_parser("play", help="boot a profile and play it in an SDL2 window")
     add_run_args(play)
     play.add_argument("--scale", type=int, default=3, help="integer window scale for active video")
@@ -1433,6 +1627,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--video-json", help="optional APF video.json to compare frame dimensions against")
     validate.add_argument("--no-update", action="store_true", help="do not add derived phases/lifecycle to result.json or lifecycle.json")
     validate.set_defaults(func=cmd_validate_artifacts)
+
+    diagnose = sub.add_parser("diagnose", help="classify run artifacts into stable APF contract diagnostics")
+    diagnose.add_argument("artifact_dir", help="directory containing result.json and run artifacts")
+    diagnose.add_argument("--profile", help="optional profile for expected metadata and profile risk context")
+    diagnose.add_argument("--video-json", help="optional APF video.json to compare against")
+    diagnose.add_argument("--json", action="store_true", help="print diagnostics JSON")
+    diagnose.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    diagnose.add_argument("--strict", action="store_true", help="return nonzero when error diagnostics are present")
+    diagnose.set_defaults(func=cmd_diagnose)
 
     video_shape = sub.add_parser("video-shape", help="extract or run stable APF-facing video timing/shape discovery")
     video_shape.add_argument("result", nargs="?", help="path to result.json, video_shape.json, or an artifact directory")
