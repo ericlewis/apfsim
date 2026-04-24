@@ -1,0 +1,63 @@
+{
+  "name": "mock_external_sram_corrupt",
+  "description": "Negative APF memory regression: same async SRAM ROM path as mock_external_sram, but intentionally swaps a byte lane so data-slot readback must fail",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist_external_sram.f",
+  "scenario": "scenarios/rom_load_stress.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "verilator_flags": [
+    "-DAPFSIM_EXTERNAL_SRAM_MODEL",
+    "-DAPFSIM_EXTERNAL_SRAM_CORRUPT_BYTE_LANE",
+    "-DAPFSIM_MEMORY_COUNTER_TEST"
+  ],
+  "memory_activity": {
+    "top_port_classes": ["sram"]
+  },
+  "memory": {
+    "schema": "apfsim.memory_dependencies.v1",
+    "required": true,
+    "classes": ["sram"],
+    "external_classes": ["sram"],
+    "models": {
+      "sram": {
+        "selected": "async_sram_16_pin_corrupt_fixture",
+        "confidence": "negative_test",
+        "source": "rtl_shims/external_memory_models.sv",
+        "notes": "Negative fixture deliberately corrupts a byte lane to prove bridge readback catches ROM corruption."
+      }
+    },
+    "risks": []
+  },
+  "wrapper_generation": {
+    "memory_models": {
+      "generated": false,
+      "classes": ["sram"],
+      "activity_counters": [
+        "sram_read_count",
+        "sram_write_count",
+        "sram_bus_contention_error",
+        "sram_byte_enable_error"
+      ],
+      "wire_required": false,
+      "confidence": "negative_test"
+    }
+  },
+  "frames": 2,
+  "timeout_cycles": 5000000,
+  "build_dir": "build/profiles/mock_external_sram_corrupt/obj",
+  "artifact_root": "build/profiles/mock_external_sram_corrupt/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "rtl_shims/external_memory_models.sv",
+    "examples/assets/rom_stress.bin"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "bridge.log"
+  ]
+}

@@ -331,6 +331,9 @@ Public profiles live in `profiles/*.json`.
 | `mock_port_gate` | Strict built-in APF contract gate. |
 | `mock_target_commands` | Runtime target data-slot/read/write/flush/filename/open-file/debug-event regression. |
 | `mock_lifecycle` | Host lifecycle injection regression for OS notify, data-slot update, and savestate save/query. |
+| `mock_memory_activity` | Standard memory counter port capture regression. |
+| `mock_external_sram` | ROM data-slot load through the public async SRAM model with bridge readback verification. |
+| `mock_external_sram_corrupt` | Negative fixture that deliberately corrupts a SRAM byte lane so readback diagnostics must fire. |
 | `core_template` | Official `open-fpga/core-template` smoke profile. |
 | `interact` | Official `open-fpga/core-example-interact` settings/profile smoke. |
 | `kbmouse_targetdata` | Official `open-fpga/core-example-kbmouse-targetdata` controller and target-data smoke. |

@@ -279,3 +279,15 @@ bin/apfsim run --profile mock_rom_stress --artifacts output/mock-rom-stress
 ```
 
 This loads `examples/assets/rom_stress.bin` as 1025 bytes at `0x10000000`, expects 257 bridge writes, reads back exactly 1025 bytes, and checks the simulator FNV-1a checksum `0xC2DB5F2D9083B8A2`.
+
+Use `mock_external_sram` to run the same load through the public async SRAM model:
+
+```sh
+bin/apfsim run --profile mock_external_sram --artifacts output/mock-external-sram
+```
+
+Use `mock_external_sram_corrupt` as the negative fixture. It intentionally swaps a byte lane before writing the SRAM model, so the run must fail with `DATA_SLOT_READBACK_MISMATCH`:
+
+```sh
+bin/apfsim run --profile mock_external_sram_corrupt --artifacts output/mock-external-sram-corrupt
+```

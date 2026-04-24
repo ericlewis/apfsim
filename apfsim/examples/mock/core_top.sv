@@ -117,11 +117,81 @@ module core_top (
     reg [31:0] save_mem [0:16383];
     integer i;
 
+`ifdef APFSIM_EXTERNAL_SRAM_MODEL
+    wire rom_bridge_region = bridge_addr[31:24] == 8'h10;
+    wire [16:0] sram_addr = bridge_addr[18:2];
+    wire [15:0] sram_lo_dq;
+    wire [15:0] sram_hi_dq;
+    wire [31:0] sram_read_word = {sram_hi_dq, sram_lo_dq};
+    wire [15:0] sram_lo_write_data;
+    wire [15:0] sram_hi_write_data;
+    wire [31:0] sram_lo_read_count;
+    wire [31:0] sram_lo_write_count;
+    wire        sram_lo_bus_contention_error;
+    wire        sram_lo_byte_enable_error;
+    wire [31:0] sram_hi_read_count;
+    wire [31:0] sram_hi_write_count;
+    wire        sram_hi_bus_contention_error;
+    wire        sram_hi_byte_enable_error;
+
+`ifdef APFSIM_EXTERNAL_SRAM_CORRUPT_BYTE_LANE
+    assign sram_lo_write_data = {bridge_wr_data[7:0], bridge_wr_data[15:8]};
+`else
+    assign sram_lo_write_data = bridge_wr_data[15:0];
+`endif
+    assign sram_hi_write_data = bridge_wr_data[31:16];
+    assign sram_lo_dq = (bridge_wr && rom_bridge_region) ? sram_lo_write_data : 16'hZZZZ;
+    assign sram_hi_dq = (bridge_wr && rom_bridge_region) ? sram_hi_write_data : 16'hZZZZ;
+
+    apfsim_async_sram_16_model #(
+        .ADDR_WIDTH(17)
+    ) rom_sram_lo (
+        .clk(clk_74a),
+        .reset(1'b0),
+        .ce_n(!rom_bridge_region),
+        .oe_n(!(bridge_rd && rom_bridge_region)),
+        .we_n(!(bridge_wr && rom_bridge_region)),
+        .lb_n(1'b0),
+        .ub_n(1'b0),
+        .addr(sram_addr),
+        .dq(sram_lo_dq),
+        .read_count(sram_lo_read_count),
+        .write_count(sram_lo_write_count),
+        .bus_contention_error(sram_lo_bus_contention_error),
+        .byte_enable_error(sram_lo_byte_enable_error)
+    );
+
+    apfsim_async_sram_16_model #(
+        .ADDR_WIDTH(17)
+    ) rom_sram_hi (
+        .clk(clk_74a),
+        .reset(1'b0),
+        .ce_n(!rom_bridge_region),
+        .oe_n(!(bridge_rd && rom_bridge_region)),
+        .we_n(!(bridge_wr && rom_bridge_region)),
+        .lb_n(1'b0),
+        .ub_n(1'b0),
+        .addr(sram_addr),
+        .dq(sram_hi_dq),
+        .read_count(sram_hi_read_count),
+        .write_count(sram_hi_write_count),
+        .bus_contention_error(sram_hi_bus_contention_error),
+        .byte_enable_error(sram_hi_byte_enable_error)
+    );
+`endif
+
 `ifdef APFSIM_MEMORY_COUNTER_TEST
+`ifdef APFSIM_EXTERNAL_SRAM_MODEL
+    assign apfsim_sram_read_count = sram_lo_read_count + sram_hi_read_count;
+    assign apfsim_sram_write_count = sram_lo_write_count + sram_hi_write_count;
+    assign apfsim_sram_bus_contention_error = sram_lo_bus_contention_error | sram_hi_bus_contention_error;
+    assign apfsim_sram_byte_enable_error = sram_lo_byte_enable_error | sram_hi_byte_enable_error;
+`else
     assign apfsim_sram_read_count = input_sample_count;
     assign apfsim_sram_write_count = rom_write_count;
     assign apfsim_sram_bus_contention_error = 1'b0;
     assign apfsim_sram_byte_enable_error = 1'b0;
+`endif
 `endif
 
     function automatic [31:0] ok_word(input [15:0] result);
@@ -297,7 +367,11 @@ module core_top (
             end else if (addr == 32'h50000060) begin
                 decode_read = cart_notify_last;
             end else if (addr[31:24] == 8'h10) begin
+`ifdef APFSIM_EXTERNAL_SRAM_MODEL
+                decode_read = sram_read_word;
+`else
                 decode_read = rom_mem[addr[10:2]];
+`endif
             end else if (addr[31:16] == 16'h2000) begin
                 decode_read = save_mem[addr[15:2]];
             end else begin
@@ -483,7 +557,9 @@ module core_top (
 `endif
             end else if (bridge_addr[31:24] == 8'h10) begin
                 rom_write_count <= rom_write_count + 32'd4;
+`ifndef APFSIM_EXTERNAL_SRAM_MODEL
                 rom_mem[bridge_addr[10:2]] <= bridge_wr_data;
+`endif
             end else if (bridge_addr[31:16] == 16'h2000) begin
                 save_mem[bridge_addr[15:2]] <= bridge_wr_data;
             end else if (bridge_addr == 32'h50000010) begin

@@ -24,6 +24,8 @@ MOCK_PUBLIC_PROFILES = {
     "mock_target_commands",
     "mock_lifecycle",
     "mock_memory_activity",
+    "mock_external_sram",
+    "mock_external_sram_corrupt",
 }
 
 

@@ -1282,11 +1282,11 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def matrix_profiles(name: str) -> list[str]:
     if name == "ci":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram"]
     if name == "local-fast":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram", "core_template"]
     if name == "local-real":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram", "core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
     if name == "official-examples":
         return ["core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
     raise ApfSimError(f"unknown matrix: {name}")
