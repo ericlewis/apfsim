@@ -93,6 +93,19 @@ Matrix modes:
 | `local-fast` | `mock_port_gate` plus available core template. |
 | `local-real` | `mock_port_gate`, core template, BasicAssets, and Pac-Man when their checkouts exist. |
 
+## Pocket Log Analysis
+
+Use Pocket debug logs to compare real hardware lifecycle behavior against simulator output:
+
+```sh
+bin/apfsim analyze-log /Volumes/Untitled/System/Logs/ericlewis.TimePilot_20260423_143713.txt \
+  --json build/logs/timepilot_lifecycle.json \
+  --strict-lifecycle \
+  --verbose
+```
+
+The analyzer extracts APF lifecycle phases from Pocket logs or `apfsim` `bridge.log` files: setup status, Reset Enter, data-slot request write, all-complete, RTC, target Ready-to-Run, Reset Exit, and running status. It also reports observed data-slot IDs, sizes, load addresses, target commands, and missing or out-of-order phases.
+
 ## Correctness Checks
 
 Scenarios can make port-validation strict under `expect:`. The built-in [port gate](scenarios/port_gate.yml) demonstrates the supported checks:

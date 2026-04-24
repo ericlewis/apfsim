@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from log_analyzer import analyze_logs, write_json_report
+
 APFSIM_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = APFSIM_DIR / "profiles"
 SKIP_EXIT = 77
@@ -380,6 +382,49 @@ def cmd_test(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def resolve_user_path(value: str) -> Path:
+    path = Path(os.path.expanduser(os.path.expandvars(value)))
+    return path if path.is_absolute() else (Path.cwd() / path).resolve()
+
+
+def cmd_analyze_log(args: argparse.Namespace) -> int:
+    paths = [resolve_user_path(value) for value in args.log]
+    missing = [path for path in paths if not path.exists()]
+    if missing:
+        raise ApfSimError("missing log file(s):\n" + "\n".join(f"  - {path}" for path in missing), phase="preflight")
+
+    report = analyze_logs(paths)
+    if args.json:
+        write_json_report(report, resolve_user_path(args.json))
+
+    for item in report["files"]:
+        print(f"== {item['path']} ==")
+        print(f"lines={item['line_count']} events={item['event_count']} lifecycle={'ok' if item['sequence_ok'] else 'incomplete'}")
+        if item["statuses"]:
+            status_text = ", ".join(f"{s['status']}@{s['line']}" for s in item["statuses"])
+            print(f"statuses: {status_text}")
+        if item["data_slots"]:
+            for slot in item["data_slots"]:
+                slot_id = "?" if slot["id"] is None else str(slot["id"])
+                size = "?" if slot["bytes"] is None else str(slot["bytes"])
+                address = "?" if slot["address"] is None else f"0x{slot['address']:08X}"
+                print(f"data slot {slot_id}: bytes={size} address={address} writes32={slot['writes32']}")
+        if item["missing_phases"]:
+            print("missing: " + ", ".join(item["missing_phases"]))
+        if item["order_errors"]:
+            for error in item["order_errors"]:
+                print(f"order error: {error}")
+        if args.verbose:
+            commands = [f"{cmd['command']}@{cmd['line']}" for cmd in item["host_commands"]]
+            targets = [f"{cmd['command']}@{cmd['line']}" for cmd in item["target_commands"]]
+            if commands:
+                print("host commands: " + " -> ".join(commands))
+            if targets:
+                print("target commands: " + " -> ".join(targets))
+
+    return 1 if args.strict_lifecycle and not report["ok"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="apfsim")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -403,6 +448,13 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--matrix", choices=["ci", "local-fast", "local-real"], default="local-fast")
     add_run_args(test, include_profile=False)
     test.set_defaults(func=cmd_test)
+
+    analyze = sub.add_parser("analyze-log", help="extract APF lifecycle events from Pocket or apfsim logs")
+    analyze.add_argument("log", nargs="+")
+    analyze.add_argument("--json", help="write structured lifecycle report")
+    analyze.add_argument("--strict-lifecycle", action="store_true", help="return nonzero if a full boot lifecycle is missing or out of order")
+    analyze.add_argument("--verbose", action="store_true", help="print host and target command sequence")
+    analyze.set_defaults(func=cmd_analyze_log)
     return parser
 
 
