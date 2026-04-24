@@ -277,6 +277,8 @@ def run_corpus_core(
     profile = core.get("profile")
     if profile:
         cmd.extend(["--profile", str(profile)])
+        if root_path is not None:
+            cmd.extend(["--root", str(root_path)])
     elif root_path is not None:
         cmd.extend(["--root", str(root_path)])
         if truthy(core.get("auto_profile", True)):

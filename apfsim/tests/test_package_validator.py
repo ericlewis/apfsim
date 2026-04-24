@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -98,3 +99,33 @@ def test_package_check_cli_writes_json_out(tmp_path):
     doc = json.loads(out.read_text())
     assert doc["ok"] is True
     assert "package-check: ok=True" in r.stdout
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_bringup_profile_root_writes_package_check_after_artifact_clean(tmp_path):
+    make_package(tmp_path)
+    out = tmp_path / "bringup"
+
+    r = subprocess.run(
+        [
+            str(CLI),
+            "bringup",
+            "--profile", "mock_port_gate",
+            "--root", str(tmp_path),
+            "--expected-platform-id", "arcade_good",
+            "--out", str(out),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=180,
+    )
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    package_check = out / "run" / "package_check.json"
+    assert package_check.exists()
+    package = json.loads(package_check.read_text())
+    assert package["ok"] is True
+    summary = json.loads((out / "run" / "summary.json").read_text())
+    assert summary["package"]["known"] is True
+    assert summary["row"]["package_ok"] is True

@@ -126,6 +126,15 @@ def load_profile(name_or_path: str) -> Profile:
     return Profile(name=name, path=path, raw=raw, root=profile_root(raw))
 
 
+def load_profile_with_root(name_or_path: str, root: Path) -> Profile:
+    path = profile_path(name_or_path)
+    raw = load_json(path)
+    raw["root"] = str(root)
+    name = str(raw.get("name") or path.stem)
+    raw = expand_profile_shim_catalog(raw, name)
+    return Profile(name=name, path=path, raw=raw, root=root)
+
+
 def resolve_path(value: str | os.PathLike[str], profile: Profile | None = None) -> Path:
     text = str(value)
     root = profile.root if profile and profile.root else APFSIM_DIR
@@ -823,7 +832,7 @@ def cmd_bringup(args: argparse.Namespace) -> int:
         }
         (out / "profile.generated.json").write_text(json.dumps(generated_payload, indent=2) + "\n")
     else:
-        profile = load_profile(args.profile)
+        profile = load_profile_with_root(args.profile, resolve_user_path(args.root)) if args.root else load_profile(args.profile)
 
     slots = list(args.slot or [])
     if args.rom:
@@ -836,12 +845,12 @@ def cmd_bringup(args: argparse.Namespace) -> int:
     artifact_root = resolve_path(run_args.artifacts, profile)
     package_path = artifact_root / "package_check.json"
     package_root = resolve_user_path(args.root) if args.root else profile.root
+    rc = run_profile(run_args, profile)
     if package_root:
         try:
             write_package_check(package_root, package_path, expected_platform_id=args.expected_platform_id)
         except Exception as exc:
             eprint(f"apfsim package-check warning: {exc}")
-    rc = run_profile(run_args, profile)
 
     diagnostics_path = artifact_root / "diagnostics.json"
     diagnostics_doc = load_json(diagnostics_path) if diagnostics_path.exists() else {}
@@ -1715,7 +1724,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bringup = sub.add_parser("bringup", help="discover/profile/run/diagnose one APF core bring-up")
     bringup.add_argument("--profile", help="existing apfsim profile name or path")
-    bringup.add_argument("--root", help="Pocket core checkout root")
+    bringup.add_argument("--root", help="Pocket core checkout/package root; binds {root} for --profile or generates a profile with --auto-profile")
     bringup.add_argument("--auto-profile", action="store_true", help="generate a reviewable profile candidate before running")
     bringup.add_argument("--name", help="generated profile name when using --auto-profile")
     bringup.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")

@@ -51,4 +51,16 @@ bin/apfsim build --profile output/generated-profiles/<name>/<name>.json
 bin/apfsim run --profile output/generated-profiles/<name>/<name>.json --artifacts output/<name>-generated
 ```
 
+For bring-up with package validation, pass the package/check-out root explicitly. This also binds `{root}` placeholders for generated profile paths:
+
+```sh
+bin/apfsim bringup \
+  --profile output/generated-profiles/<name>/<name>.json \
+  --root /path/to/openFPGA-Core-or-package \
+  --expected-platform-id arcade_platform \
+  --out output/bringup/<name>
+```
+
+`expected_artifacts` is checked immediately after the simulator run and before bring-up postprocessing. List runtime artifacts only, such as `result.json`, `video_shape.json`, `lifecycle.json`, `bridge.log`, frame JSON/PPM files, audio files, and save dumps. Do not list postprocess artifacts such as `diagnostics.json`, `bringup-report.md`, `repair-plan.json`, `summary.json`, `summary.tsv`, or `package_check.json`; those are produced by `bringup` after runtime artifact validation.
+
 Only copy the candidate into `profiles/` after it builds, boots, and produces artifacts worth keeping as a regression profile.

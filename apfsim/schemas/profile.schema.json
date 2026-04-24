@@ -63,6 +63,7 @@
       "items": { "type": "string" }
     },
     "expected_artifacts": {
+      "description": "Runtime artifacts that must exist immediately after simulator execution. Do not list bringup postprocess artifacts such as diagnostics.json, bringup-report.md, repair-plan.json, summary.json, summary.tsv, or package_check.json.",
       "type": "array",
       "items": { "type": "string" }
     },

@@ -186,6 +186,17 @@ bin/apfsim bringup \
   --repair
 ```
 
+For an existing generated profile, pass the package/check-out root explicitly so `{root}` placeholders resolve and package validation is included in the run directory:
+
+```sh
+bin/apfsim bringup \
+  --profile output/generated-profiles/core/core.json \
+  --root /path/to/openFPGA-Core-or-package \
+  --expected-platform-id arcade_core \
+  --out output/bringup/core \
+  --repair
+```
+
 Automatic source mutation is intentionally not performed. Repair output is patch-plan first; source patches will be emitted only by explicit repair rules.
 
 ### Run The Deterministic Mock Profile

@@ -40,6 +40,19 @@ bin/apfsim bringup \
   --repair
 ```
 
+Existing generated profile with an explicit package/check-out root:
+
+```sh
+bin/apfsim bringup \
+  --profile output/generated/core/profile.json \
+  --root /path/to/openFPGA-Core-or-package \
+  --expected-platform-id arcade-platform \
+  --out output/bringup/core-name \
+  --repair
+```
+
+When `--profile` and `--root` are both supplied, `apfsim` binds `{root}` placeholders in the profile and writes `run/package_check.json` before `summary.json` is generated.
+
 Existing run diagnosis:
 
 ```sh
@@ -135,6 +148,8 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `artifact_dir`
 
 `bin/apfsim summarize-run` emits this row today as `summary.json.row` and `summary.tsv`. `bringup` writes both automatically after package-check, run, diagnose, and optional repair-plan.
+
+Profile `expected_artifacts` is a runtime-only contract. Do not put `diagnostics.json`, `bringup-report.md`, `repair-plan.json`, `summary.json`, `summary.tsv`, or `package_check.json` in that list, because those are bring-up postprocess outputs created after runtime artifact validation.
 
 The first blocking diagnostic should determine the immediate next action. Do not treat `boot reached running` as a pass if video/audio/data/package gates fail.
 
