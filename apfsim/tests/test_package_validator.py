@@ -84,6 +84,48 @@ def test_package_validator_reports_folder_and_bitstream_errors(tmp_path):
     assert "PLATFORM_ID_MISMATCH" in codes
 
 
+def test_package_validator_allows_setup_json_slot_without_address(tmp_path):
+    from package_validator import validate_package
+
+    core_dir = make_package(tmp_path)
+    data_path = core_dir / "data.json"
+    data = json.loads(data_path.read_text())
+    data["data"]["data_slots"].insert(0, {
+        "id": 0,
+        "name": "Game JSON Setup",
+        "required": True,
+        "parameters": 16,
+        "filename": "game.json",
+        "extensions": ["json"],
+        "size_maximum": 4096,
+    })
+    write_json(data_path, data)
+    (tmp_path / "Assets" / "arcade_good" / "common" / "game.json").write_text("{}\n")
+
+    doc = validate_package(tmp_path, expected_platform_id="arcade_good")
+    codes = {item["code"] for item in doc["package_errors"]}
+
+    assert doc["ok"] is True
+    assert "DATA_SLOT_ADDRESS_INVALID" not in codes
+    assert "/Assets/arcade_good/common/game.json" in doc["sd_paths"]["assets"]
+
+
+def test_package_validator_rejects_present_invalid_data_slot_address(tmp_path):
+    from package_validator import validate_package
+
+    core_dir = make_package(tmp_path)
+    data_path = core_dir / "data.json"
+    data = json.loads(data_path.read_text())
+    data["data"]["data_slots"][0]["address"] = "not-a-number"
+    write_json(data_path, data)
+
+    doc = validate_package(tmp_path, expected_platform_id="arcade_good")
+    codes = {item["code"] for item in doc["package_errors"]}
+
+    assert doc["ok"] is False
+    assert "DATA_SLOT_ADDRESS_INVALID" in codes
+
+
 def test_package_check_cli_writes_json_out(tmp_path):
     make_package(tmp_path)
     out = tmp_path / "package_check.json"

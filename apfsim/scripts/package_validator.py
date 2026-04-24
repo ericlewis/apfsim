@@ -240,7 +240,10 @@ def _validate_data_slots(
         if slot_id in seen_ids:
             _add(errors, "DATA_SLOT_ID_DUPLICATE", f"Duplicate data slot id {slot_id}.", path=str(core_dir / "data.json"))
         seen_ids.add(slot_id)
-        address = _as_int(slot.get("address"), -1)
+        if "address" in slot and slot.get("address") not in (None, ""):
+            address = _as_int(slot.get("address"), -1)
+        else:
+            address = 0
         if not 0 <= address <= 0xFFFFFFFF:
             _add(errors, "DATA_SLOT_ADDRESS_INVALID", f"data slot {slot_id} has invalid 32-bit address.", path=str(core_dir / "data.json"))
         size_exact = _as_int(slot.get("size_exact"), 0)

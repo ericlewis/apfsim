@@ -78,4 +78,5 @@ host_commands:
 - Savestate load/replay for `0x00A4` is not implemented.
 - Runtime data reload currently covers `0x008A`; full user-reload semantics for parameters bits 6, 7, and 8 still need reset/restart/bitstream-reload orchestration.
 - Package validation does not prove that every `interact.json` bridge address has matching HDL read/write decode; runtime profiles should add readback checks for that.
+- Package validation allows data slots with no `address` field. Setup-only JSON/instance slots may not have a bridge load address. Runtime scenarios still need an address when `apfsim` is expected to write a payload into core memory.
 - Physical cartridge, link port, IR, PSRAM, SRAM, and SDRAM timing are outside the generic APF gate unless a profile provides explicit models/checks.

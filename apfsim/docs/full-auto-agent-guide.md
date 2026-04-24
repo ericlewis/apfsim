@@ -197,6 +197,8 @@ Recommended row fields:
 
 Root-missing entries are skipped so agents can share manifests across machines. Missing ROMs/assets are failures with `ROM_MISSING` because they indicate a bad generator input or package manifest. Use `--strict` when the corpus is a CI gate; omit it for exploratory inventory runs.
 
+Package validation permits data slots with no `address` field. This is valid for setup-only JSON/instance slots that the core does not receive as a bridge payload. If a corpus run needs `apfsim` to load bytes for that slot, the generated scenario/profile must still provide a concrete bridge address.
+
 ## Shape Repair Loop
 
 Use shape auto-repair only when the video protocol is valid:
