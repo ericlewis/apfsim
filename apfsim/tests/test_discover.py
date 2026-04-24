@@ -441,6 +441,7 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert "apfsim_sdram_pin_model" in wrapper_text
     assert "apfsim_sdram_read_count" in wrapper_text
     assert "apfsim_sdram_rom_preload_count" in wrapper_text
+    assert "apfsim_sdram_first_rom_mismatch_expected" in wrapper_text
     assert "u_core.prog_we" in wrapper_text
     assert "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv" in filelist
     assert "rtl_shims/external_memory_models.sv" in filelist
@@ -451,3 +452,4 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["top"] == "core_top"
     assert candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["class"] == "sdram"
     assert "apfsim_sdram_rom_mismatch_count" in candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["counter_ports"]
+    assert "apfsim_sdram_first_rom_mismatch_actual" in candidate["wrapper_generation"]["jtframe_pocket_logical_wrapper"]["memory_model"]["counter_ports"]

@@ -145,17 +145,69 @@ static std::string json_escape(const std::string& text) {
     return out;
 }
 
-static void write_failure_result(const fs::path& path, const std::string& phase, const std::string& message) {
+static std::string slot_file_status(const DataSlot& slot) {
+    if (slot.file.empty()) return "unspecified";
+    return std::filesystem::exists(slot.file) ? "exists" : "missing";
+}
+
+static std::string slot_load_status_for_artifact(const DataSlot& slot) {
+    if (!slot.load_status.empty()) return slot.load_status;
+    if (slot.deferload) return "deferload";
+    if (!slot.has_address) return "no_address";
+    if (slot.file.empty()) return slot.required ? "required_file_unspecified" : "no_file";
+    if (!std::filesystem::exists(slot.file)) return slot.required ? "required_file_missing" : "optional_file_missing";
+    if (slot.loaded_size > 0) return "loaded";
+    return "not_loaded";
+}
+
+static void write_failure_slots(std::ostream& out, const std::vector<DataSlot>& slots, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    for (size_t i = 0; i < slots.size(); ++i) {
+        const auto& slot = slots[i];
+        out << pad << "{ \"id\": " << slot.id
+            << ", \"name\": \"" << json_escape(slot.name)
+            << "\", \"path\": \"" << json_escape(slot.file.string())
+            << "\", \"address\": \"" << hex32(slot.address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"required\": " << (slot.required ? "true" : "false")
+            << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
+            << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"file_status\": \"" << json_escape(slot_file_status(slot))
+            << "\", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot_load_status_for_artifact(slot))
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
+            << "\", \"loaded_size\": " << slot.loaded_size
+            << ", \"loaded_bytes\": " << slot.loaded_size
+            << ", \"loaded_words\": " << slot.loaded_words
+            << ", \"crc\": \"" << hex32(slot.loaded_crc32)
+            << "\", \"checksum_fnv1a64\": \"" << hex64(slot.loaded_checksum) << "\" }";
+        out << (i + 1 == slots.size() ? "\n" : ",\n");
+    }
+}
+
+static void write_failure_result(
+    const fs::path& path,
+    const std::string& phase,
+    const std::string& message,
+    const Scenario* scenario = nullptr) {
     if (path.empty()) return;
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
     std::ofstream out(path);
     if (!out) return;
+    const std::vector<DataSlot> empty_slots;
+    const auto& slots = scenario ? scenario->slots : empty_slots;
     out << "{\n";
     out << "  \"ok\": false,\n";
     out << "  \"status\": \"failed\",\n";
     out << "  \"artifact_dir\": \"" << json_escape(path.parent_path().string()) << "\",\n";
     out << "  \"failed_phase\": \"" << json_escape(phase) << "\",\n";
     out << "  \"message\": \"" << json_escape(message) << "\",\n";
+    out << "  \"data\": { \"slots\": [\n";
+    write_failure_slots(out, slots, 4);
+    out << "  ] },\n";
+    out << "  \"data_load\": { \"done_seen\": false, \"total_loaded_bytes\": " << host_loaded_bytes(slots) << ", \"slots\": [\n";
+    write_failure_slots(out, slots, 4);
+    out << "  ] },\n";
     out << "  \"phases\": {\n";
     out << "    \"boot\": { \"ok\": false },\n";
     out << "    \"reset\": { \"ok\": false },\n";
@@ -226,6 +278,11 @@ static MemoryActivitySnapshot capture_memory_activity(Top* top) {
     snapshot.counters.push_back({"sdram_first_coverage_gap_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_coverage_gap_addr), false, ""});
     snapshot.counters.push_back({"sdram_first_rom_mismatch_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_addr), false, ""});
     snapshot.counters.push_back({"sdram_first_rom_unwritten_read_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_read_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_expected", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_expected), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_actual", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_actual), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_dqm", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_dqm), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_expected", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_expected), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_dqm", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_dqm), false, ""});
     snapshot.counters.push_back({"sdram_command_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_command_error), top->apfsim_sdram_command_error != 0, "SDRAM_COMMAND_ERROR"});
     snapshot.counters.push_back({"sdram_bus_contention_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_bus_contention_error), top->apfsim_sdram_bus_contention_error != 0, "MEMORY_BUS_CONTENTION"});
     snapshot.counters.push_back({"sdram_byte_enable_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_byte_enable_error), top->apfsim_sdram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
@@ -564,8 +621,12 @@ static void write_result_json(
         out << "    { \"id\": " << slot.id
             << ", \"name\": \"" << json_escape(slot.name)
             << "\", \"address\": \"" << hex32(slot.address)
-            << "\", \"loaded_last_address\": \"" << hex32(slot.loaded_last_address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"loaded_last_address\": \"" << hex32(slot.loaded_last_address)
             << "\", \"file\": \"" << json_escape(slot.file.string())
+            << "\", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot.load_status)
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
             << "\", \"loaded_size\": " << slot.loaded_size
             << ", \"loaded_words\": " << slot.loaded_words
             << ", \"observed_write_words\": " << slot.observed_write_words
@@ -619,6 +680,10 @@ static void write_result_json(
             << ", \"name\": \"" << json_escape(slot.name)
             << "\", \"path\": \"" << json_escape(slot.file.string())
             << "\", \"address\": \"" << hex32(slot.address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot.load_status)
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
             << "\", \"loaded_bytes\": " << slot.loaded_size
             << ", \"loaded_words\": " << slot.loaded_words
             << ", \"crc\": \"" << hex32(slot.loaded_crc32)
@@ -647,7 +712,7 @@ static void write_result_json(
         out
             << ", \"observed_write_words\": " << slot.observed_write_words
             << ", \"observed_write_address_errors\": " << slot.observed_write_address_errors
-            << ", \"done_seen\": " << ((slot.deferload || slot.file.empty() || slot.loaded_size > 0) ? "true" : "false") << " }";
+            << ", \"done_seen\": " << ((slot.deferload || !slot.has_address || slot.file.empty() || slot.loaded_size > 0) ? "true" : "false") << " }";
         out << (i + 1 == slots.size() ? "\n" : ",\n");
     }
     out << "  ] },\n";
@@ -1160,7 +1225,10 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
             *existing = slot;
             if (!override.name.empty()) existing->name = override.name;
             if (!override.file.empty()) existing->file = override.file;
-            if (override.address != 0) existing->address = override.address;
+            if (override.has_address) {
+                existing->address = override.address;
+                existing->has_address = true;
+            }
             existing->required = existing->required || override.required;
             existing->nonvolatile = existing->nonvolatile || override.nonvolatile;
             existing->deferload = existing->deferload || override.deferload;
@@ -1240,7 +1308,7 @@ static void validate_audio(Assertions& asserts, const Scenario& scenario, const 
 static void validate_data(Assertions& asserts, const Scenario& scenario) {
     const auto& expect = scenario.data_expect;
     for (const auto& slot : scenario.slots) {
-        if (expect.require_required_slots && slot.required && !slot.deferload && slot.loaded_size == 0) {
+        if (expect.require_required_slots && slot.required && !slot.deferload && slot.has_address && slot.loaded_size == 0) {
             asserts.fail("data: required slot " + std::to_string(slot.id) + " was not loaded");
         }
         const bool slot_file_available = !slot.file.empty() && std::filesystem::exists(slot.file);
@@ -1365,11 +1433,14 @@ static std::vector<ReadbackObservation> run_readbacks(Bridge& bridge, const Scen
 
 int main(int argc, char** argv) {
     CliOptions opt;
+    Scenario scenario;
+    bool scenario_loaded = false;
     std::string phase = "startup";
     try {
         opt = parse_args(argc, argv);
         phase = "scenario";
-        auto scenario = parse_scenario(opt.scenario_path);
+        scenario = parse_scenario(opt.scenario_path);
+        scenario_loaded = true;
         if (!opt.data_json.empty()) merge_slots(scenario.slots, parse_data_json(opt.data_json));
         if (!opt.interact_json.empty()) {
             auto scenario_interact = scenario.interact;
@@ -1540,7 +1611,7 @@ int main(int argc, char** argv) {
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "apfsim error: " << e.what() << "\n";
-        write_failure_result(opt.result_json, phase, e.what());
+        write_failure_result(opt.result_json, phase, e.what(), scenario_loaded ? &scenario : nullptr);
         return 2;
     }
 }

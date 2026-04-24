@@ -285,6 +285,11 @@ module apfsim_sdram_pin_model #(
     output reg  [ADDR_WIDTH-1:0] first_coverage_gap_addr,
     output reg  [ADDR_WIDTH-1:0] first_rom_mismatch_addr,
     output reg  [ADDR_WIDTH-1:0] first_rom_unwritten_read_addr,
+    output reg  [15:0] first_rom_mismatch_expected,
+    output reg  [15:0] first_rom_mismatch_actual,
+    output reg  [1:0]  first_rom_mismatch_dqm,
+    output reg  [15:0] first_rom_unwritten_expected,
+    output reg  [1:0]  first_rom_unwritten_dqm,
     output reg          command_error,
     output reg          bus_contention_error,
     output reg          byte_enable_error,
@@ -362,10 +367,15 @@ module apfsim_sdram_pin_model #(
         end
     endfunction
 
-    task automatic note_rom_mismatch(input [ADDR_WIDTH-1:0] addr);
+    task automatic note_rom_mismatch(input [ADDR_WIDTH-1:0] addr, input [15:0] actual, input [15:0] expected, input [1:0] dqm);
         begin
             rom_mismatch_error <= 1'b1;
-            if (rom_mismatch_count == 32'd0) first_rom_mismatch_addr <= addr;
+            if (rom_mismatch_count == 32'd0) begin
+                first_rom_mismatch_addr <= addr;
+                first_rom_mismatch_expected <= expected;
+                first_rom_mismatch_actual <= actual;
+                first_rom_mismatch_dqm <= dqm;
+            end
             rom_mismatch_count <= rom_mismatch_count + 32'd1;
         end
     endtask
@@ -420,6 +430,11 @@ module apfsim_sdram_pin_model #(
         first_coverage_gap_addr = {ADDR_WIDTH{1'b0}};
         first_rom_mismatch_addr = {ADDR_WIDTH{1'b0}};
         first_rom_unwritten_read_addr = {ADDR_WIDTH{1'b0}};
+        first_rom_mismatch_expected = 16'h0000;
+        first_rom_mismatch_actual = 16'h0000;
+        first_rom_mismatch_dqm = 2'b11;
+        first_rom_unwritten_expected = 16'h0000;
+        first_rom_unwritten_dqm = 2'b11;
         command_error = 1'b0;
         bus_contention_error = 1'b0;
         byte_enable_error = 1'b0;
@@ -455,18 +470,26 @@ module apfsim_sdram_pin_model #(
                 drive_data <= mem[read_addr];
                 if (expected_valid[read_addr] === 1'b1 &&
                     word_mismatch(mem[read_addr], expected_mem[read_addr], read_dqm_pipe[MAX_LATENCY-1])) begin
-                    note_rom_mismatch(read_addr);
+                    note_rom_mismatch(read_addr, mem[read_addr], expected_mem[read_addr], read_dqm_pipe[MAX_LATENCY-1]);
                 end
             end else if (expected_valid[read_addr] === 1'b1) begin
                 drive_data <= expected_mem[read_addr];
                 uninitialized_read_error <= 1'b1;
-                if (rom_unwritten_read_count == 32'd0) first_rom_unwritten_read_addr <= read_addr;
+                if (rom_unwritten_read_count == 32'd0) begin
+                    first_rom_unwritten_read_addr <= read_addr;
+                    first_rom_unwritten_expected <= expected_mem[read_addr];
+                    first_rom_unwritten_dqm <= read_dqm_pipe[MAX_LATENCY-1];
+                end
                 rom_unwritten_read_count <= rom_unwritten_read_count + 32'd1;
             end else begin
                 drive_data <= 16'h0000;
                 if (preload_count == 32'd0) begin
                     uninitialized_read_error <= 1'b1;
-                    if (rom_unwritten_read_count == 32'd0) first_rom_unwritten_read_addr <= read_addr;
+                    if (rom_unwritten_read_count == 32'd0) begin
+                        first_rom_unwritten_read_addr <= read_addr;
+                        first_rom_unwritten_expected <= 16'h0000;
+                        first_rom_unwritten_dqm <= read_dqm_pipe[MAX_LATENCY-1];
+                    end
                     rom_unwritten_read_count <= rom_unwritten_read_count + 32'd1;
                 end else begin
                     if (coverage_gap_count == 32'd0) first_coverage_gap_addr <= read_addr;

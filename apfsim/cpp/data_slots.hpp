@@ -15,6 +15,7 @@ struct DataSlot {
     uint16_t id = 0;
     std::string name;
     uint32_t address = 0;
+    bool has_address = false;
     std::filesystem::path file;
     bool required = false;
     bool nonvolatile = false;
@@ -28,6 +29,8 @@ struct DataSlot {
     uint32_t observed_first_write_address = 0;
     uint32_t observed_last_write_address = 0;
     uint64_t observed_write_address_errors = 0;
+    std::string load_status;
+    std::string load_error;
     uint64_t loaded_checksum = 0;
     uint32_t loaded_crc32 = 0;
     uint64_t expected_checksum = 0;
@@ -79,7 +82,7 @@ inline uint32_t crc32(const std::vector<uint8_t>& bytes) {
 inline uint64_t host_loaded_bytes(const std::vector<DataSlot>& slots) {
     uint64_t total = 0;
     for (const auto& slot : slots) {
-        if (!slot.deferload && !slot.nonvolatile) total += slot.loaded_size;
+        if (slot.has_address && !slot.deferload && !slot.nonvolatile) total += slot.loaded_size;
     }
     return total;
 }
@@ -153,7 +156,7 @@ inline std::vector<DataSlot> parse_data_json(const std::filesystem::path& path) 
                                  json_has_int_field(obj, "load_address") ||
                                  json_has_int_field(obj, "bridge_address");
         const auto address = json_int_field(obj, "address", json_int_field(obj, "load_address", json_int_field(obj, "bridge_address", 0)));
-        if (id == UINT64_MAX || !has_address) continue;
+        if (id == UINT64_MAX) continue;
         DataSlot slot;
         slot.id = static_cast<uint16_t>(id);
         slot.name = json_string_field(obj, "name");
@@ -161,6 +164,7 @@ inline std::vector<DataSlot> parse_data_json(const std::filesystem::path& path) 
         slot.file = json_string_field(obj, "file");
         if (slot.file.empty()) slot.file = json_string_field(obj, "filename");
         slot.address = static_cast<uint32_t>(address);
+        slot.has_address = has_address;
         slot.required = json_bool_field(obj, "required", false);
         slot.nonvolatile = json_bool_field(obj, "nonvolatile", json_bool_field(obj, "persistent", false));
         slot.deferload = json_bool_field(obj, "deferload", json_bool_field(obj, "deferred", false));
@@ -200,6 +204,7 @@ inline void apply_slot_file_override(std::vector<DataSlot>& slots, uint16_t id, 
     slot.name = "slot" + std::to_string(id);
     slot.file = file;
     slot.address = id == 4 ? 0x20000000u : 0x10000000u + (static_cast<uint32_t>(id) - 1u) * 0x01000000u;
+    slot.has_address = true;
     slot.nonvolatile = id >= 4;
     slots.push_back(slot);
 }

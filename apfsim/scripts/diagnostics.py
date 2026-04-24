@@ -22,9 +22,14 @@ KNOWN_CODES = (
     "BRIDGE_READBACK_MISMATCH",
     "DATA_SLOT_TABLE_MISSING",
     "DATA_SLOT_ADDRESS_INVALID",
+    "DATA_SLOT_REQUIRED_MISSING",
+    "DATA_SLOT_FILE_MISSING",
+    "DATA_SLOT_ID_MISMATCH",
+    "DATA_SLOT_PAYLOAD_MISSING",
     "DATA_SLOT_LOAD_SHORT",
     "DATA_SLOT_READBACK_UNAVAILABLE",
     "DATA_SLOT_READBACK_MISMATCH",
+    "INSTANCE_JSON_INVALID",
     "INTERACT_WRITE_MISSING",
     "VIDEO_NO_CLOCK",
     "VIDEO_NO_DE",
@@ -109,6 +114,36 @@ def _obj(value: Any) -> dict[str, Any]:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _counter_value(counters: list[dict[str, Any]], name: str, default: int = 0) -> int:
+    for item in counters:
+        if isinstance(item, dict) and str(item.get("name") or "") == name:
+            return _as_int(item.get("value"), default)
+    return default
+
+
+def _data_slots(result: dict[str, Any]) -> list[dict[str, Any]]:
+    data_load_slots = _list(_obj(result.get("data_load")).get("slots"))
+    data_slots = _list(_obj(result.get("data")).get("slots"))
+    slots = data_load_slots or data_slots
+    return [slot for slot in slots if isinstance(slot, dict)]
+
+
+def _loaded_slot_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = []
+    for slot in _data_slots(result):
+        loaded = _as_int(slot.get("loaded_bytes"), _as_int(slot.get("loaded_size"), 0))
+        if loaded <= 0:
+            continue
+        candidates.append({
+            "id": slot.get("id"),
+            "name": slot.get("name", ""),
+            "path": slot.get("path", slot.get("file", "")),
+            "loaded_bytes": loaded,
+            "crc": slot.get("crc", slot.get("loaded_crc32")),
+        })
+    return candidates
 
 
 def _severity_counts(items: list[dict[str, Any]]) -> dict[str, int]:
@@ -382,9 +417,114 @@ def diagnose_artifacts(
             ],
         )
 
-    for index, slot in enumerate(_list(data.get("slots"))):
-        if not isinstance(slot, dict):
-            continue
+    slots = _data_slots(result)
+    slot_pointer_base = "/data_load/slots" if _list(_obj(result.get("data_load")).get("slots")) else "/data/slots"
+    for index, slot in enumerate(slots):
+        slot_id = slot.get("id")
+        required = _as_bool(slot.get("required"), False)
+        deferload = _as_bool(slot.get("deferload"), False)
+        has_address = _as_bool(slot.get("has_address"), True)
+        loaded_bytes = _as_int(slot.get("loaded_bytes"), _as_int(slot.get("loaded_size"), 0))
+        path = str(slot.get("path") or slot.get("file") or "")
+        file_exists = _as_bool(slot.get("file_exists"), bool(path))
+        load_status = str(slot.get("load_status") or "")
+        load_error = str(slot.get("load_error") or "")
+
+        if required and not deferload and has_address and loaded_bytes <= 0:
+            if not path or load_status == "required_file_unspecified":
+                _diag(
+                    items,
+                    code="DATA_SLOT_REQUIRED_MISSING",
+                    phase="data",
+                    severity="error",
+                    summary=f"Required dataslot {slot_id} has no payload path.",
+                    observed={"slot": slot_id, "path": path, "load_status": load_status},
+                    expected={"required_slot_payload": "configured"},
+                    evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
+                    likely_causes=[
+                        "scenario did not provide --slot for a required ROM/cart asset",
+                        "generated data.json defines a required loadable slot without a filename",
+                        "instance JSON did not resolve the required slot payload",
+                    ],
+                    repairs=[
+                        {
+                            "kind": "scenario_or_package_patch",
+                            "confidence": 0.84,
+                            "description": "Provide the required slot payload or fix the generated instance/data slot mapping before interpreting boot/video failures.",
+                        }
+                    ],
+                )
+            elif not file_exists or load_status == "required_file_missing":
+                _diag(
+                    items,
+                    code="DATA_SLOT_FILE_MISSING",
+                    phase="data",
+                    severity="error",
+                    summary=f"Required dataslot {slot_id} payload file is missing.",
+                    observed={"slot": slot_id, "path": path, "file_exists": file_exists, "load_error": load_error},
+                    expected={"file_exists": True},
+                    evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
+                    likely_causes=[
+                        "profile or scenario points at the wrong ROM path",
+                        "instance JSON selected an asset that is not present in the package tree",
+                        "core URL/path was generated without the required game/cart payload",
+                    ],
+                    repairs=[
+                        {
+                            "kind": "scenario_or_package_patch",
+                            "confidence": 0.86,
+                            "description": "Fix the slot file path or generated package asset mapping; rerun before debugging reset/video.",
+                        }
+                    ],
+                )
+            else:
+                _diag(
+                    items,
+                    code="DATA_SLOT_PAYLOAD_MISSING",
+                    phase="data",
+                    severity="error",
+                    summary=f"Required dataslot {slot_id} did not load any bytes.",
+                    observed={"slot": slot_id, "path": path, "load_status": load_status, "load_error": load_error},
+                    expected={"loaded_bytes": "> 0"},
+                    evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
+                    likely_causes=[
+                        "data-slot request-write was rejected or never reached the target",
+                        "payload size validation failed before bridge writes started",
+                        "required ROM/cart slot was mistaken for setup-only metadata",
+                    ],
+                    repairs=[
+                        {
+                            "kind": "profile_or_package_patch",
+                            "confidence": 0.74,
+                            "description": "Check data.json slot id/address/size constraints and the bridge command transcript for this slot.",
+                        }
+                    ],
+                )
+
+        if load_status in {"size_exact_mismatch", "size_maximum_exceeded"}:
+            _diag(
+                items,
+                code="DATA_SLOT_LOAD_SHORT",
+                phase="data",
+                severity="error",
+                summary=f"Dataslot {slot_id} payload failed size validation.",
+                observed={"slot": slot_id, "path": path, "load_status": load_status, "load_error": load_error},
+                expected={"size": "data.json size_exact/size_maximum constraints"},
+                evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
+                likely_causes=[
+                    "wrong ROM/archive file selected for this slot",
+                    "generated size_exact/size_maximum metadata does not match the assembled payload",
+                    "instance JSON points at a setup file instead of the actual game data",
+                ],
+                repairs=[
+                    {
+                        "kind": "package_or_scenario_patch",
+                        "confidence": 0.82,
+                        "description": "Select the correct payload or regenerate data.json size constraints from the assembled ROM.",
+                    }
+                ],
+            )
+
         loaded_words = _as_int(slot.get("loaded_words"), 0)
         observed_words = _as_int(slot.get("observed_write_words"), loaded_words)
         if loaded_words > 0 and observed_words < loaded_words:
@@ -396,7 +536,7 @@ def diagnose_artifacts(
                 summary=f"Dataslot {slot.get('id')} received fewer bridge writes than expected.",
                 observed={"slot": slot.get("id"), "observed_write_words": observed_words},
                 expected={"loaded_words": loaded_words},
-                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
                 likely_causes=[
                     "bridge write strobe timing is too short",
                     "slot load address is wrong",
@@ -422,7 +562,7 @@ def diagnose_artifacts(
                     "address_errors": _as_int(slot.get("observed_write_address_errors"), 0),
                 },
                 expected={"address": slot.get("address")},
-                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
                 likely_causes=[
                     "data.json address does not match the wrapper memory map",
                     "bridge address bits are truncated or remapped",
@@ -445,7 +585,7 @@ def diagnose_artifacts(
                 summary=f"Dataslot {slot.get('id')} required bridge readback verification, but no readback was attempted.",
                 observed={"slot": slot.get("id"), "readback_attempted": slot.get("readback_attempted")},
                 expected={"readback_attempted": True},
-                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
                 likely_causes=[
                     "scenario requested readback after the slot was skipped or defer-loaded",
                     "profile generated a readback requirement for a write-only load window",
@@ -480,7 +620,7 @@ def diagnose_artifacts(
                     "loaded_checksum": slot.get("loaded_checksum"),
                     "expected_byte": slot.get("readback_expected_byte"),
                 },
-                evidence=[{"artifact": "result.json", "json_pointer": f"/data/slots/{index}"}],
+                evidence=[{"artifact": "result.json", "json_pointer": f"{slot_pointer_base}/{index}"}],
                 likely_causes=[
                     "external RAM write path corrupted ROM bytes",
                     "bridge byte lane or endian mapping is wrong",
@@ -501,6 +641,34 @@ def diagnose_artifacts(
                     },
                 ],
             )
+
+    if _as_int(bridge.get("target_slot_errors"), 0) > 0:
+        _diag(
+            items,
+            code="DATA_SLOT_ID_MISMATCH",
+            phase="data",
+            severity="error",
+            summary="Target requested one or more undefined data-slot IDs.",
+            observed={
+                "target_slot_errors": _as_int(bridge.get("target_slot_errors"), 0),
+                "target_dataslot_reads": _as_int(bridge.get("target_dataslot_reads"), 0),
+                "target_dataslot_writes": _as_int(bridge.get("target_dataslot_writes"), 0),
+            },
+            expected={"target_slot_errors": 0},
+            evidence=[{"artifact": "result.json", "json_pointer": "/bridge/target_slot_errors"}],
+            likely_causes=[
+                "generated data.json uses different slot IDs than the HDL expects",
+                "instance JSON remapped or omitted a secondary ROM slot",
+                "deferload target-command slots were not included in the scenario/profile",
+            ],
+            repairs=[
+                {
+                    "kind": "metadata_or_scenario_patch",
+                    "confidence": 0.78,
+                    "description": "Compare target data-slot command IDs in bridge.log with data.json and generated scenario slots.",
+                }
+            ],
+        )
 
     persistent_writes = _as_int(interact.get("persistent_writes"), 0)
     if failed_phase == "interact" or ("interact" in message.lower() and persistent_writes <= 0):
@@ -1110,6 +1278,53 @@ def _memory_error_repair_description(code: str) -> str:
     return "Trace the named counter back to the memory model and inspect address, byte-enable, OE/WE, and request/ack timing."
 
 
+def _memory_error_observed(
+    code: str,
+    counter_name: str,
+    value: int,
+    class_name: Any,
+    observed: Any,
+    counters: list[dict[str, Any]],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    doc = {
+        "counter": counter_name,
+        "class": class_name,
+        "value": value,
+        "observed": observed,
+    }
+    if code == "MEMORY_ROM_WRITE_MISMATCH":
+        addr = _counter_value(counters, "sdram_first_rom_mismatch_addr")
+        dqm = _counter_value(counters, "sdram_first_rom_mismatch_dqm", 3)
+        doc.update({
+            "first_addr": addr,
+            "bank": addr >> 22,
+            "expected_word": _counter_value(counters, "sdram_first_rom_mismatch_expected"),
+            "actual_word": _counter_value(counters, "sdram_first_rom_mismatch_actual"),
+            "dqm": dqm,
+            "byte_lanes_checked": {
+                "low": (dqm & 0x1) == 0,
+                "high": (dqm & 0x2) == 0,
+            },
+            "source_slot_candidates": _loaded_slot_candidates(result),
+        })
+    elif code == "MEMORY_UNINITIALIZED_READ":
+        addr = _counter_value(counters, "sdram_first_rom_unwritten_read_addr")
+        dqm = _counter_value(counters, "sdram_first_rom_unwritten_dqm", 3)
+        doc.update({
+            "first_addr": addr,
+            "bank": addr >> 22,
+            "expected_word": _counter_value(counters, "sdram_first_rom_unwritten_expected"),
+            "dqm": dqm,
+            "byte_lanes_checked": {
+                "low": (dqm & 0x1) == 0,
+                "high": (dqm & 0x2) == 0,
+            },
+            "source_slot_candidates": _loaded_slot_candidates(result),
+        })
+    return doc
+
+
 def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict[str, Any], result: dict[str, Any]) -> None:
     if not memory_activity:
         return
@@ -1132,12 +1347,15 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
             phase="memory",
             severity=str(error.get("severity") or "error"),
             summary=f"Memory activity counter reported {code}.",
-            observed={
-                "counter": counter_name,
-                "class": error.get("class"),
-                "value": error.get("value"),
-                "observed": error.get("observed", memory_activity.get("observed")),
-            },
+            observed=_memory_error_observed(
+                code,
+                counter_name,
+                _as_int(error.get("value"), 0),
+                error.get("class"),
+                error.get("observed", memory_activity.get("observed")),
+                counters,
+                result,
+            ),
             expected={"memory_error_counters": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/errors/{index}"}],
             likely_causes=_memory_error_likely_causes(code),
@@ -1164,11 +1382,15 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
             phase="memory",
             severity="error",
             summary=f"Memory counter {counter_name or '<unnamed>'} reported an error.",
-            observed={
-                "counter": counter_name,
-                "class": counter.get("class"),
-                "value": _as_int(counter.get("value"), 0),
-            },
+            observed=_memory_error_observed(
+                code,
+                counter_name,
+                _as_int(counter.get("value"), 0),
+                counter.get("class"),
+                memory_activity.get("observed"),
+                counters,
+                result,
+            ),
             expected={"counter_value": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],
             likely_causes=_memory_error_likely_causes(code),
@@ -1207,6 +1429,8 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
                 "class": counter.get("class"),
                 "value": value,
                 "first_addr": first_addr,
+                "bank": first_addr >> 22,
+                "source_slot_candidates": _loaded_slot_candidates(result),
             },
             expected={"coverage_gap_count": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],

@@ -267,7 +267,10 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             if (key == "id") current_slot->id = static_cast<uint16_t>(parse_u64(value));
             else if (key == "name") current_slot->name = unquote(value);
             else if (key == "file") current_slot->file = unquote(value);
-            else if (key == "address") current_slot->address = static_cast<uint32_t>(parse_u64(value));
+            else if (key == "address") {
+                current_slot->address = static_cast<uint32_t>(parse_u64(value));
+                current_slot->has_address = true;
+            }
             else if (key == "required") current_slot->required = parse_bool(value);
             else if (key == "nonvolatile") current_slot->nonvolatile = parse_bool(value);
             else if (key == "deferload") current_slot->deferload = parse_bool(value);

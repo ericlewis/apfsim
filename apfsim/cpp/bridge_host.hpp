@@ -438,20 +438,39 @@ public:
     }
 
     void load_slot(DataSlot& slot) {
-        if (slot.deferload || slot.file.empty()) return;
+        slot.load_error.clear();
+        if (slot.deferload) {
+            slot.load_status = "deferload";
+            return;
+        }
+        if (slot.file.empty()) {
+            slot.load_status = slot.required ? "required_file_unspecified" : "no_file";
+            if (slot.required && slot.has_address) slot.load_error = "required slot file was not specified";
+            return;
+        }
+        if (!slot.has_address) {
+            slot.load_status = "no_address";
+            return;
+        }
         if (!std::filesystem::exists(slot.file)) {
+            slot.load_status = slot.required ? "required_file_missing" : "optional_file_missing";
             if (slot.required) {
-                throw std::runtime_error("required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string());
+                slot.load_error = "required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string();
+                throw std::runtime_error(slot.load_error);
             }
             log_event("DATASLOT optional file missing id=" + std::to_string(slot.id) + " file=" + slot.file.string());
             return;
         }
         const auto bytes = read_binary_file(slot.file);
         if (slot.size_exact && bytes.size() != slot.size_exact) {
-            throw std::runtime_error("slot " + std::to_string(slot.id) + " size mismatch");
+            slot.load_status = "size_exact_mismatch";
+            slot.load_error = "slot " + std::to_string(slot.id) + " size mismatch";
+            throw std::runtime_error(slot.load_error);
         }
         if (slot.size_maximum && bytes.size() > slot.size_maximum) {
-            throw std::runtime_error("slot " + std::to_string(slot.id) + " exceeds maximum size");
+            slot.load_status = "size_maximum_exceeded";
+            slot.load_error = "slot " + std::to_string(slot.id) + " exceeds maximum size";
+            throw std::runtime_error(slot.load_error);
         }
         slot.loaded_size = bytes.size();
         slot.loaded_words = (bytes.size() + 3) / 4;
@@ -473,6 +492,7 @@ public:
         slot.loaded_checksum = fnv1a64(bytes);
         slot.loaded_crc32 = crc32(bytes);
         slot.image = bytes;
+        slot.load_status = "loading";
         log_event("DATASLOT load begin id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) +
                   " address=" + hex32(slot.address) + " file=" + slot.file.string());
         host_command(apf::kDataSlotRequestWrite, slot.id, static_cast<uint32_t>(bytes.size()), slot.address, 0);
@@ -480,6 +500,7 @@ public:
         burst_write(slot.address, bytes);
         active_load_slot_ = nullptr;
         if (slot.verify_readback) verify_loaded_slot_readback(slot, bytes);
+        slot.load_status = "loaded";
         log_event("DATASLOT load done id=" + std::to_string(slot.id) + " writes32=" + std::to_string((bytes.size() + 3) / 4));
         std::cout << "PASS data: slot " << slot.id << " loaded " << bytes.size() << " bytes at " << hex32(slot.address) << "\n";
     }
@@ -961,8 +982,6 @@ public:
         for (auto& slot : slots) {
             if (!slot.file.empty() && std::filesystem::exists(slot.file)) {
                 slot.loaded_size = std::filesystem::file_size(slot.file);
-            } else if (!slot.file.empty() && slot.required && !slot.deferload) {
-                throw std::runtime_error("required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string());
             }
         }
         bridge_.populate_slot_table(slots);

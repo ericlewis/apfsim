@@ -146,6 +146,7 @@ After a run, `memory_activity.json.observed` should be `true` if the wrapper exp
 - `sdram_rom_coverage_gap_count` counts reads outside the ROM-backed coverage map. This is useful for identifying partial or wrong ROM payloads without treating every dummy smoke file as physical SDRAM corruption.
 - `sdram_rom_unwritten_read_count` is a hard error: the core read a ROM-backed address before the physical SDRAM write path made that word valid.
 - `sdram_rom_mismatch_count` is a hard error: physical SDRAM data differed from the expected ROM-backed word at a read address.
+- First-error evidence includes the SDRAM flat address, bank, expected/actual word where applicable, and DQM byte-lane mask. Diagnostics also include loaded slot/file candidates so generator tooling can connect a failing SDRAM read back to the APF payload selection.
 
 ## External RAM Direction
 
@@ -260,6 +261,11 @@ output wire [31:0] apfsim_sdram_rom_unwritten_read_count,
 output wire [23:0] apfsim_sdram_first_coverage_gap_addr,
 output wire [23:0] apfsim_sdram_first_rom_mismatch_addr,
 output wire [23:0] apfsim_sdram_first_rom_unwritten_read_addr,
+output wire [15:0] apfsim_sdram_first_rom_mismatch_expected,
+output wire [15:0] apfsim_sdram_first_rom_mismatch_actual,
+output wire [1:0]  apfsim_sdram_first_rom_mismatch_dqm,
+output wire [15:0] apfsim_sdram_first_rom_unwritten_expected,
+output wire [1:0]  apfsim_sdram_first_rom_unwritten_dqm,
 output wire        apfsim_sdram_command_error,
 output wire        apfsim_sdram_bus_contention_error,
 output wire        apfsim_sdram_byte_enable_error,

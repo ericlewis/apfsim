@@ -119,6 +119,106 @@ def test_diagnostics_detect_data_slot_short_write(tmp_path):
     assert "DATA_SLOT_LOAD_SHORT" in diagnostic_codes(doc)
 
 
+def test_diagnostics_detect_required_data_slot_without_payload(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "assert"
+    result["message"] = "data: required slot 4 was not loaded"
+    result["data_load"] = {
+        "slots": [
+            {
+                "id": 4,
+                "name": "Cartridge",
+                "required": True,
+                "has_address": True,
+                "loaded_bytes": 0,
+                "path": "",
+                "load_status": "required_file_unspecified",
+            }
+        ]
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "DATA_SLOT_REQUIRED_MISSING" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "DATA_SLOT_REQUIRED_MISSING")
+    assert item["phase"] == "data"
+    assert item["observed"]["slot"] == 4
+    assert item["evidence"][0]["json_pointer"] == "/data_load/slots/0"
+
+
+def test_diagnostics_detect_required_data_slot_missing_file(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "startup"
+    result["message"] = "required slot 4 file not found"
+    result["data_load"] = {
+        "slots": [
+            {
+                "id": 4,
+                "name": "Cartridge",
+                "required": True,
+                "has_address": True,
+                "loaded_bytes": 0,
+                "path": str(tmp_path / "missing.ngp"),
+                "file_exists": False,
+                "load_status": "required_file_missing",
+                "load_error": "required slot 4 file not found",
+            }
+        ]
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "DATA_SLOT_FILE_MISSING" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "DATA_SLOT_FILE_MISSING")
+    assert item["observed"]["slot"] == 4
+    assert item["observed"]["file_exists"] is False
+
+
+def test_diagnostics_allow_setup_slot_without_address(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["data_load"] = {
+        "slots": [
+            {
+                "id": 0,
+                "name": "Game JSON Setup",
+                "required": True,
+                "has_address": False,
+                "loaded_bytes": 0,
+                "path": "setup.json",
+                "file_exists": True,
+                "load_status": "no_address",
+            }
+        ]
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "DATA_SLOT_ADDRESS_INVALID" not in diagnostic_codes(doc)
+    assert "DATA_SLOT_REQUIRED_MISSING" not in diagnostic_codes(doc)
+
+
+def test_diagnostics_detect_target_data_slot_id_mismatch(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["bridge"]["target_slot_errors"] = 1
+    result["bridge"]["target_dataslot_reads"] = 2
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "DATA_SLOT_ID_MISMATCH" in diagnostic_codes(doc)
+    item = next(item for item in doc["diagnostics"] if item["code"] == "DATA_SLOT_ID_MISMATCH")
+    assert item["observed"]["target_slot_errors"] == 1
+
+
 def test_diagnostics_detect_data_slot_readback_mismatch(tmp_path):
     artifacts = tmp_path / "run"
     result = passing_result()
@@ -227,6 +327,9 @@ def test_diagnostics_explain_sdram_rom_write_mismatch(tmp_path):
                 "error_code": "MEMORY_ROM_WRITE_MISMATCH",
             },
             {"name": "sdram_first_rom_mismatch_addr", "class": "sdram", "value": 4660, "error": False},
+            {"name": "sdram_first_rom_mismatch_expected", "class": "sdram", "value": 43690, "error": False},
+            {"name": "sdram_first_rom_mismatch_actual", "class": "sdram", "value": 21845, "error": False},
+            {"name": "sdram_first_rom_mismatch_dqm", "class": "sdram", "value": 2, "error": False},
         ],
         "errors": [
             {
@@ -244,6 +347,9 @@ def test_diagnostics_explain_sdram_rom_write_mismatch(tmp_path):
 
     item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_ROM_WRITE_MISMATCH")
     assert item["phase"] == "memory"
+    assert item["observed"]["expected_word"] == 43690
+    assert item["observed"]["actual_word"] == 21845
+    assert item["observed"]["byte_lanes_checked"] == {"low": True, "high": False}
     assert "external SDRAM write path corrupted ROM-backed bytes" in item["likely_causes"]
     assert "bank/address packing" in item["repairs"][0]["description"]
 
