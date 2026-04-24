@@ -101,6 +101,7 @@ def generate_profile_candidate(
 
     catalog = load_catalog(catalog_path or apfsim_dir / "catalogs" / "shims.json")
     selected_shims = select_shims(root, inv, catalog)
+    selected_shim_details = shim_detail_records(selected_shims, catalog, root, apfsim_dir, name)
     generated_paths = generated_filelist_entries(selected_shims, catalog, root, apfsim_dir, name)
     excluded_sources = generated_source_paths(selected_shims, catalog, root, apfsim_dir, name)
     qsf_project = parse_qsf_project(select_qsf(root, inv))
@@ -149,6 +150,9 @@ def generate_profile_candidate(
         profile["shim_catalog"] = selected_shims
     if inv.memory.get("required"):
         profile["memory"] = inv.memory
+    risks = profile_risks(inv, selected_shims, qsf_project)
+    if risks:
+        profile["risks"] = risks
     profile_sources = qsf_project.sources if qsf_project.sources else hdl_paths(root)
     if any(path.suffix == ".sv" for path in profile_sources):
         profile["verilator_flags"] = ["--sv"]
@@ -163,7 +167,7 @@ def generate_profile_candidate(
 
     warnings = scenario_warnings + generation_warnings(inv, selected_shims, filelist_lines, qsf_project, excluded_sources)
     profile_path.write_text(json.dumps(profile, indent=2) + "\n")
-    notes_path.write_text(render_notes(inv, profile, selected_shims, warnings, profile_path, filelist_path, scenario_path, qsf_project, excluded_sources))
+    notes_path.write_text(render_notes(inv, profile, selected_shim_details, warnings, profile_path, filelist_path, scenario_path, qsf_project, excluded_sources))
     qsf_payload = qsf_report(qsf_project, excluded_sources)
     report = {
         "schema": "apfsim.generated_profile.v1",
@@ -172,6 +176,7 @@ def generate_profile_candidate(
         "status": inv.status,
         "action": inv.action,
         "selected_shims": selected_shims,
+        "selected_shim_details": selected_shim_details,
         "paths": {
             "profile": str(profile_path),
             "filelist": str(filelist_path),
@@ -265,6 +270,34 @@ def source_patterns_match(root: Path, patterns: list[str]) -> bool:
         if any(pattern.search(text) for pattern in compiled):
             return True
     return False
+
+
+def shim_detail_records(
+    selected: list[str],
+    catalog: dict[str, dict[str, Any]],
+    root: Path,
+    apfsim_dir: Path,
+    profile_name: str,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for name in selected:
+        entry = catalog.get(name, {})
+        context = {"catalog_source": select_catalog_source(entry, root), "profile": profile_name}
+        filelist_entries = [
+            relative_to_apfsim(expand_template(str(value), root, apfsim_dir, context), apfsim_dir)
+            for value in entry.get("filelist_entries", [])
+        ]
+        records.append({
+            "name": name,
+            "description": str(entry.get("description", "")),
+            "kind": str(entry.get("kind", "")),
+            "confidence": str(entry.get("confidence", "")),
+            "modules": [str(item) for item in entry.get("modules", [])],
+            "memory_classes": [str(item) for item in entry.get("memory_classes", [])],
+            "diagnostic_codes": [str(item) for item in entry.get("diagnostic_codes", [])],
+            "filelist_entries": dedupe(filelist_entries),
+        })
+    return records
 
 
 def generated_filelist_entries(selected: list[str], catalog: dict[str, dict[str, Any]], root: Path, apfsim_dir: Path, profile_name: str) -> list[str]:
@@ -710,6 +743,32 @@ def first_video_mode(video_json: Path | None) -> tuple[int, int]:
     return modes[0] if modes else (0, 0)
 
 
+def profile_risks(inv: Any, selected_shims: list[str], qsf_project: QsfProject | None = None) -> list[dict[str, Any]]:
+    risks: list[dict[str, Any]] = []
+    qsf_vhdl_count = len(qsf_project.vhdl_files) if qsf_project else 0
+    if inv.vhdl_files or qsf_vhdl_count:
+        risks.append({
+            "code": "VHDL_ENTITY_STUBBED",
+            "severity": "warning",
+            "kind": "mixed_hdl",
+            "message": "VHDL sources were detected but generated Verilator profiles do not compile VHDL directly.",
+            "evidence": {
+                "discovered_vhdl_files": inv.vhdl_files,
+                "qsf_vhdl_files": qsf_vhdl_count,
+            },
+            "recommended_action": "Provide translated RTL, a faithful SystemVerilog shim, or an explicit mixed-language strategy before treating gameplay behavior as verified.",
+        })
+    if not selected_shims and (inv.uses_pll or inv.uses_altsyncram or inv.uses_dcfifo or inv.qip_files):
+        risks.append({
+            "code": "SHIM_REQUIRED",
+            "severity": "warning",
+            "kind": "vendor_ip",
+            "message": "Vendor/IP usage was detected without a selected shim catalog entry.",
+            "recommended_action": "Add a deterministic simulation shim or catalog entry for each non-Verilator-friendly primitive.",
+        })
+    return risks
+
+
 def generation_warnings(
     inv: Any,
     selected_shims: list[str],
@@ -728,7 +787,7 @@ def generation_warnings(
             warnings.append(f"QSF references {len(qsf_project.missing_sources)} missing RTL source(s)")
         if qsf_project.qip_files:
             warnings.append("QSF references QIP/IP files; verify corresponding Verilator shims or public implementations")
-    if inv.vhdl_files:
+    if inv.vhdl_files or (qsf_project and qsf_project.vhdl_files):
         warnings.append("VHDL files were detected; generated Verilog profile may need public stubs or mixed-language strategy")
     for risk in inv.memory.get("risks", []):
         if isinstance(risk, dict) and risk.get("code"):
@@ -760,7 +819,7 @@ def qsf_report(qsf_project: QsfProject | None, excluded_sources: set[Path] | Non
 def render_notes(
     inv: Any,
     profile: dict[str, Any],
-    selected_shims: list[str],
+    selected_shim_details: list[dict[str, Any]],
     warnings: list[str],
     profile_path: Path,
     filelist_path: Path,
@@ -812,8 +871,11 @@ def render_notes(
         "## Shim Catalog Entries",
         "",
     ])
-    if selected_shims:
-        lines.extend(f"- `{name}`" for name in selected_shims)
+    if selected_shim_details:
+        for shim in selected_shim_details:
+            modules = ", ".join(str(item) for item in shim.get("modules", [])) or "-"
+            label = f"{shim.get('kind') or 'shim'}/{shim.get('confidence') or 'unknown'}"
+            lines.append(f"- `{shim['name']}` ({label}): {modules}")
     else:
         lines.append("- none")
     lines.extend(["", "## Warnings", ""])

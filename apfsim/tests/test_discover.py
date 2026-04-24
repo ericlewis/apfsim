@@ -148,6 +148,10 @@ def test_generate_profile_reports_memory_dependencies(tmp_path):
     assert "external_sram_pin_model" in candidate["selected_shims"]
     assert "psram_cram_transactional_models" in candidate["selected_shims"]
     assert "sdram_ideal_transactional" in candidate["selected_shims"]
+    details = {item["name"]: item for item in candidate["selected_shim_details"]}
+    assert details["sdram_ideal_transactional"]["confidence"] == "bringup_only"
+    assert "rtl_shims/sdram_sim.sv" in details["sdram_ideal_transactional"]["filelist_entries"]
+    assert "apfsim_async_sram_16_model" in details["external_sram_pin_model"]["modules"]
     assert "sram" in candidate["memory"]["available_models"]
     assert "rtl_shims/external_memory_models.sv" in filelist
     assert profile["memory"]["models"]["sdram"]["selected"] == "ideal_transactional"
@@ -198,6 +202,7 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
 
     report = json.loads(r.stdout)
     candidate = json.loads(Path(report["paths"]["report"]).read_text())
+    profile = json.loads(Path(report["paths"]["profile"]).read_text())
     filelist = Path(report["paths"]["filelist"]).read_text()
     first_path = "{root}/src/fpga/core/lib/first.v"
     core_top_path = "{root}/src/fpga/core/core_top.sv"
@@ -214,3 +219,5 @@ def test_generate_profile_uses_qsf_source_order_defines_and_filters(tmp_path):
         str(fpga_dir / "core" / "source_bundle.qip"),
     ]
     assert any("mf_pllbase.v" in item for item in candidate["qsf"]["skipped_sources"])
+    assert any(risk["code"] == "VHDL_ENTITY_STUBBED" for risk in profile["risks"])
+    assert any("VHDL files were detected" in warning for warning in candidate["warnings"])

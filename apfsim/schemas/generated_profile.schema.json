@@ -24,6 +24,24 @@
       "additionalProperties": true
     },
     "selected_shims": { "type": "array", "items": { "type": "string" } },
+    "selected_shim_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "kind": { "type": "string" },
+          "confidence": { "type": "string" },
+          "modules": { "type": "array", "items": { "type": "string" } },
+          "memory_classes": { "type": "array", "items": { "type": "string" } },
+          "diagnostic_codes": { "type": "array", "items": { "type": "string" } },
+          "filelist_entries": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    },
     "warnings": { "type": "array", "items": { "type": "string" } },
     "inventory": { "type": "object" }
   },

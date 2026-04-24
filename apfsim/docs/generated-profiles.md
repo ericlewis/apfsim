@@ -28,10 +28,12 @@ When a Quartus `.qsf` is present, the generated filelist is QSF-aware:
 - VHDL files and non-RTL QIP/IP files are recorded in `candidate.json` but are not passed directly to Verilator.
 - Known APF shell/vendor IP files such as `apf_top`, `mf_pllbase`, `altsyncram`, `dcfifo`, and DDIO wrappers are filtered and replaced by simulator shims where available.
 - Shim catalog entries may add generated replacement files or static filelist entries such as simulator-only VHDL/RAM compatibility stubs.
-- Generated candidates auto-select public catalog entries when inventory flags, memory classes, or source regexes match. Treat this as a suggestion: review `candidate.json.selected_shims`, `profile.shim_catalog`, and `NOTES.md` before committing the profile.
+- Generated candidates auto-select public catalog entries when inventory flags, memory classes, or source regexes match. Treat this as a suggestion: review `candidate.json.selected_shims`, `candidate.json.selected_shim_details`, `profile.shim_catalog`, and `NOTES.md` before committing the profile.
 - If no QSF is found, the generator falls back to filesystem source discovery under common Pocket HDL roots.
 
 `candidate.json.qsf` is the machine-readable provenance report. It includes the QSF path, QSF/QIP-expanded source counts, emitted defines, include paths, VHDL/QIP references, missing sources, and filtered/replaced source entries.
+
+When VHDL sources are detected, generated profiles also carry a `risks[]` entry with code `VHDL_ENTITY_STUBBED`. This is deliberate: Verilator does not compile VHDL in this flow, so a profile needs translated RTL, a faithful SystemVerilog shim, or an explicitly marked mixed-language strategy before gameplay behavior should be trusted.
 
 Generated candidates also include memory dependency intelligence when HDL references known RAM classes. The profile `memory` object and `candidate.json.memory` use schema `apfsim.memory_dependencies.v1` and report classes such as `sdram`, `sram`, `psram`, `cram`, `bram`, and `fifo`, selected model confidence, evidence, and risks. See [Memory Dependencies And External RAM](memory.md).
 
