@@ -1110,6 +1110,7 @@ module core_top (
             if (!core_lvbl) begin
                 video_crop_x <= 16'd0;
                 video_crop_y <= 16'd0;
+                lhbl_crop_prev <= 1'b0;
             end else begin
                 if (core_lhbl) begin
                     video_crop_x <= video_crop_x + 16'd1;
@@ -1120,8 +1121,8 @@ module core_top (
                 if (lhbl_crop_prev && !core_lhbl) begin
                     video_crop_y <= video_crop_y + 16'd1;
                 end
+                lhbl_crop_prev <= core_lhbl;
             end
-            lhbl_crop_prev <= core_lhbl;
         end
     end
 
