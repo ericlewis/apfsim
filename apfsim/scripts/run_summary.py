@@ -22,6 +22,11 @@ TSV_COLUMNS = [
     "audio_activity",
     "audio_samples",
     "audio_nonzero_samples",
+    "input_audio_effect_seen",
+    "audio_active_after_input",
+    "audio_samples_after_input",
+    "audio_nonzero_samples_after_input",
+    "audio_peak_after_input",
     "loaded_bytes_total",
     "data_crc_list",
     "data_readback_verified_slots",
@@ -114,6 +119,8 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
     video_doc = _obj(result.get("video"))
     video_activity = _obj(result.get("video_activity"))
     input_video_response = _obj(result.get("input_video_response")) or _obj(video_activity.get("input_response"))
+    audio_activity = _obj(result.get("audio_activity"))
+    input_audio_response = _obj(result.get("input_audio_response")) or _obj(audio_activity.get("input_response"))
     audio = _obj(result.get("audio"))
     data_load = _obj(result.get("data_load"))
     input_doc = _obj(result.get("input"))
@@ -199,6 +206,11 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "audio_samples": _as_int(audio.get("samples"), 0),
         "audio_nonzero_samples": _as_int(audio.get("nonzero_samples"), 0),
         "audio_peak": _as_int(audio.get("peak"), 0),
+        "input_audio_effect_seen": _as_bool(result.get("input_audio_effect_seen", input_doc.get("input_audio_effect_seen")), False),
+        "audio_active_after_input": _as_bool(input_audio_response.get("active", audio.get("active_after_input")), False),
+        "audio_samples_after_input": _as_int(input_audio_response.get("samples", audio.get("samples_after_input")), 0),
+        "audio_nonzero_samples_after_input": _as_int(input_audio_response.get("nonzero_samples", audio.get("nonzero_samples_after_input")), 0),
+        "audio_peak_after_input": _as_int(input_audio_response.get("peak", audio.get("peak_after_input")), 0),
         "loaded_bytes_total": _as_int(data_load.get("total_loaded_bytes"), 0),
         "data_crc_list": data_crc_list,
         "data_readback_verified_slots": data_readback_verified_slots,
@@ -258,6 +270,10 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
             "samples": row["audio_samples"],
             "nonzero_samples": row["audio_nonzero_samples"],
             "peak": row["audio_peak"],
+            "active_after_input": row["audio_active_after_input"],
+            "samples_after_input": row["audio_samples_after_input"],
+            "nonzero_samples_after_input": row["audio_nonzero_samples_after_input"],
+            "peak_after_input": row["audio_peak_after_input"],
         },
         "data": {
             "loaded_bytes_total": row["loaded_bytes_total"],

@@ -40,3 +40,8 @@ expect:
     require_scripted_activity: true
   audio:
     min_samples: 1
+    require_activity_after_input: true
+    input_response_window_frames: 3
+    min_samples_after_input: 1
+    min_nonzero_samples_after_input: 1
+    min_peak_after_input: 1

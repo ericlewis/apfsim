@@ -44,6 +44,7 @@ KNOWN_CODES = (
     "AUDIO_NO_MCLK",
     "AUDIO_NO_LRCK",
     "AUDIO_NO_DAC_ACTIVITY",
+    "AUDIO_NO_POST_INPUT_ACTIVITY",
     "AUDIO_RATIO_MISMATCH",
     "INPUT_NOT_OBSERVED",
     "SAVE_SLOT_NOT_UNLOADED",
@@ -720,7 +721,7 @@ def diagnose_artifacts(
         )
 
     _diagnose_video(items, result, video, video_shape, profile, video_metadata_path)
-    _diagnose_audio(items, audio, failed_phase, message)
+    _diagnose_audio(items, result, audio, failed_phase, message)
     _diagnose_input(items, input_doc)
     _diagnose_saves(items, data, save, failed_phase, message, _as_bool(result.get("ok"), False))
     _diagnose_memory_activity(items, memory_activity, result)
@@ -1091,6 +1092,19 @@ def _diagnose_assert_failure(
                 }
             ],
         )
+    elif "audio" in lower and "after input" in lower:
+        _diag(
+            items,
+            code="AUDIO_NO_POST_INPUT_ACTIVITY",
+            phase="audio",
+            severity="error",
+            summary=message or "Scenario post-input audio expectation failed.",
+            observed={"message": message},
+            expected={"audio_activity_after_input": True},
+            evidence=[{"artifact": "result.json", "json_pointer": "/input_audio_response"}],
+            likely_causes=["coin/start input did not reach the core", "gameplay has not started yet", "audio is intentionally silent until a later gameplay phase"],
+            repairs=[{"kind": "wrapper_or_scenario_patch", "confidence": 0.58, "description": "Verify controller mapping and extend the audio post-input response window if the game starts sound later."}],
+        )
     elif "audio" in lower:
         _diag(
             items,
@@ -1133,16 +1147,54 @@ def _diagnose_assert_failure(
 
 
 def _diagnose_audio(
-    items: list[dict[str, Any]], audio: dict[str, Any], failed_phase: str, message: str) -> None:
+    items: list[dict[str, Any]], result: dict[str, Any], audio: dict[str, Any], failed_phase: str, message: str) -> None:
     mclk_edges = _as_int(audio.get("mclk_edges"), 0)
     lrck_edges = _as_int(audio.get("lrck_edges"), 0)
     samples = _as_int(audio.get("samples"), 0)
     peak_l = abs(_as_int(audio.get("min_l"), 0)) + abs(_as_int(audio.get("max_l"), 0))
     peak_r = abs(_as_int(audio.get("min_r"), 0)) + abs(_as_int(audio.get("max_r"), 0))
+    activity = _obj(result.get("audio_activity"))
+    input_response = _obj(result.get("input_audio_response")) or _obj(activity.get("input_response"))
     if failed_phase == "audio" or "audio" in message.lower():
         severity = "error"
     else:
         severity = "warning"
+    if input_response and _as_bool(input_response.get("required", input_response.get("require_activity")), False) and not _as_bool(input_response.get("pass"), True):
+        _diag(
+            items,
+            code="AUDIO_NO_POST_INPUT_ACTIVITY",
+            phase="audio",
+            severity="error",
+            summary="No audio activity was observed inside the configured post-input response window.",
+            observed={
+                "name": input_response.get("name"),
+                "available": input_response.get("available"),
+                "start_frame": input_response.get("start_frame"),
+                "end_frame": input_response.get("end_frame"),
+                "samples": input_response.get("samples"),
+                "nonzero_samples": input_response.get("nonzero_samples"),
+                "peak": input_response.get("peak"),
+                "activity": input_response.get("activity"),
+            },
+            expected={
+                "min_samples": input_response.get("min_samples"),
+                "min_nonzero_samples": input_response.get("min_nonzero_samples"),
+                "min_peak": input_response.get("min_peak"),
+            },
+            evidence=[{"artifact": "result.json", "json_pointer": "/input_audio_response"}],
+            likely_causes=[
+                "input did not transition the core into a sound-producing state",
+                "audio pins are mapped but DAC data remains silent after gameplay input",
+                "scenario response window is too short for this game's first sound",
+            ],
+            repairs=[
+                {
+                    "kind": "wrapper_or_scenario_patch",
+                    "confidence": 0.62,
+                    "description": "Verify input mapping and tune the post-input audio window after confirming expected gameplay timing.",
+                }
+            ],
+        )
     if mclk_edges <= 0:
         _diag(
             items,

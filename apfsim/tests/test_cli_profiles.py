@@ -353,6 +353,10 @@ def test_mock_profile_reports_frame_change_after_input(tmp_path):
     assert result["input_video_effect_seen"] is True
     assert result["input_video_response"]["changed"] is True
     assert result["input_video_response"]["changed_frames"] >= 1
+    assert result["input_audio_effect_seen"] is True
+    assert result["input_audio_response"]["active"] is True
+    assert result["input_audio_response"]["samples"] >= 1
+    assert result["input_audio_response"]["nonzero_samples"] >= 1
     phases = {phase["name"]: phase for phase in result["video_activity"]["phases"]}
     assert phases["gameplay"]["pass"] is True
     assert phases["gameplay"]["changed"] is True

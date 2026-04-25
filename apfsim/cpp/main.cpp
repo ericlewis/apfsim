@@ -260,6 +260,38 @@ struct VideoActivityPhaseReport {
     bool pass = true;
 };
 
+struct AudioFrameMarker {
+    uint64_t frame = 0;
+    size_t sample_count = 0;
+};
+
+using AudioFrameMarkers = std::vector<AudioFrameMarker>;
+
+struct AudioActivityReport {
+    std::string name;
+    std::string start_reason;
+    uint64_t start_frame = 0;
+    uint64_t end_frame = 0;
+    uint64_t input_event_index = 0;
+    uint64_t input_event_frame = 0;
+    size_t start_sample = 0;
+    size_t end_sample = 0;
+    size_t samples = 0;
+    size_t nonzero_samples = 0;
+    int32_t peak = 0;
+    int32_t peak_to_peak_l = 0;
+    int32_t peak_to_peak_r = 0;
+    size_t clipped_samples = 0;
+    size_t min_samples = 0;
+    size_t min_nonzero_samples = 0;
+    int32_t min_peak = 0;
+    std::string activity = "unavailable";
+    bool available = true;
+    bool required = false;
+    bool active = false;
+    bool pass = true;
+};
+
 static constexpr size_t kNoInputEvent = std::numeric_limits<size_t>::max();
 
 static size_t first_delivered_input_event_index(const Scenario& scenario, const InputDriver& inputs) {
@@ -419,6 +451,111 @@ static void write_video_activity_phase(std::ostream& out, const VideoActivityPha
         << ", \"min_changed_frames\": " << report.min_changed_frames
         << ", \"min_changed_pixels\": " << report.min_changed_pixels
         << ", \"changed\": " << (report.changed ? "true" : "false")
+        << ", \"pass\": " << (report.pass ? "true" : "false")
+        << ", \"input_event_index\": " << report.input_event_index
+        << ", \"input_event_frame\": " << report.input_event_frame
+        << " }";
+}
+
+static void record_audio_frame_marker(AudioFrameMarkers& markers, uint64_t frame, const AudioCapture& audio) {
+    if (!markers.empty() && markers.back().frame == frame) {
+        markers.back().sample_count = audio.sample_count();
+        return;
+    }
+    markers.push_back({frame, audio.sample_count()});
+}
+
+static bool audio_sample_range_for_frames(
+    const AudioFrameMarkers& markers,
+    uint64_t start_frame,
+    uint64_t end_frame,
+    const AudioCapture& audio,
+    size_t& start_sample,
+    size_t& end_sample) {
+    if (start_frame == 0 || markers.empty()) return false;
+    const auto start_it = std::lower_bound(
+        markers.begin(), markers.end(), start_frame,
+        [](const AudioFrameMarker& marker, uint64_t frame) { return marker.frame < frame; });
+    if (start_it == markers.end()) return false;
+    start_sample = start_it->sample_count;
+    if (end_frame == 0) {
+        end_sample = audio.sample_count();
+        return true;
+    }
+    const auto end_it = std::upper_bound(
+        markers.begin(), markers.end(), end_frame,
+        [](uint64_t frame, const AudioFrameMarker& marker) { return frame < marker.frame; });
+    end_sample = end_it == markers.end() ? audio.sample_count() : end_it->sample_count;
+    if (end_sample < start_sample) end_sample = start_sample;
+    return true;
+}
+
+static AudioActivityReport make_input_audio_response_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const AudioCapture& audio,
+    const AudioFrameMarkers& markers) {
+    AudioActivityReport report;
+    report.name = "after_input";
+    report.start_reason = "first_delivered_input";
+    report.required = scenario.audio_expect.require_activity_after_input;
+    report.min_samples = scenario.audio_expect.min_samples_after_input;
+    report.min_nonzero_samples = scenario.audio_expect.min_nonzero_samples_after_input;
+    report.min_peak = scenario.audio_expect.min_peak_after_input;
+
+    const auto event_index = first_delivered_input_event_index(scenario, inputs);
+    if (event_index == kNoInputEvent) {
+        report.available = false;
+        report.pass = !report.required;
+        return report;
+    }
+
+    report.input_event_index = static_cast<uint64_t>(event_index);
+    report.input_event_frame = scenario.inputs[event_index].frame;
+    report.start_frame = report.input_event_frame + scenario.audio_expect.input_response_delay_frames;
+    report.end_frame = phase_end_frame(report.start_frame, 0, scenario.audio_expect.input_response_window_frames);
+    report.available = audio_sample_range_for_frames(markers, report.start_frame, report.end_frame, audio, report.start_sample, report.end_sample);
+    if (report.available) {
+        const auto stats = audio.stats_for_sample_range(report.start_sample, report.end_sample);
+        report.samples = stats.samples;
+        report.nonzero_samples = stats.nonzero_samples;
+        report.peak = stats.peak;
+        report.peak_to_peak_l = stats.peak_to_peak_l;
+        report.peak_to_peak_r = stats.peak_to_peak_r;
+        report.clipped_samples = stats.clipped_samples;
+        report.activity = stats.activity;
+        report.active = report.samples >= report.min_samples &&
+                        report.nonzero_samples >= report.min_nonzero_samples &&
+                        report.peak >= report.min_peak &&
+                        report.activity != "stuck_sample";
+    }
+    report.pass = !report.required || (report.available && report.active);
+    return report;
+}
+
+static void write_audio_activity_phase(std::ostream& out, const AudioActivityReport& report, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{ \"schema\": \"apfsim.audio_activity_phase.v1\""
+        << ", \"name\": \"" << json_escape(report.name)
+        << "\", \"start_reason\": \"" << json_escape(report.start_reason)
+        << "\", \"available\": " << (report.available ? "true" : "false")
+        << ", \"start_frame\": " << report.start_frame
+        << ", \"end_frame\": " << report.end_frame
+        << ", \"start_sample\": " << report.start_sample
+        << ", \"end_sample\": " << report.end_sample
+        << ", \"samples\": " << report.samples
+        << ", \"nonzero_samples\": " << report.nonzero_samples
+        << ", \"peak\": " << report.peak
+        << ", \"peak_to_peak_l\": " << report.peak_to_peak_l
+        << ", \"peak_to_peak_r\": " << report.peak_to_peak_r
+        << ", \"clipped_samples\": " << report.clipped_samples
+        << ", \"activity\": \"" << json_escape(report.activity)
+        << "\", \"required\": " << (report.required ? "true" : "false")
+        << ", \"require_activity\": " << (report.required ? "true" : "false")
+        << ", \"min_samples\": " << report.min_samples
+        << ", \"min_nonzero_samples\": " << report.min_nonzero_samples
+        << ", \"min_peak\": " << report.min_peak
+        << ", \"active\": " << (report.active ? "true" : "false")
         << ", \"pass\": " << (report.pass ? "true" : "false")
         << ", \"input_event_index\": " << report.input_event_index
         << ", \"input_event_frame\": " << report.input_event_frame
@@ -723,6 +860,7 @@ static void write_result_json(
     const std::vector<DataSlot>& slots,
     const VideoCapture& video,
     const AudioCapture& audio,
+    const AudioFrameMarkers& audio_frame_markers,
     const InputDriver& inputs,
     const Bridge& bridge,
     const BootTrace& boot_trace,
@@ -742,6 +880,7 @@ static void write_result_json(
     const auto video_agg = video.aggregate_after_startup_frames(scenario.video_expect.ignore_startup_frames);
     const auto input_video_response = make_input_response_report(scenario, inputs, video);
     const auto video_phase_reports = make_named_phase_reports(scenario, inputs, video);
+    const auto input_audio_response = make_input_audio_response_report(scenario, inputs, audio, audio_frame_markers);
     const auto& astats = audio.stats();
     const uint64_t validated_video_errors = video.errors_after_startup_frames(scenario.video_expect.ignore_startup_frames);
     const bool boot_ok = boot_trace.running_cycle != 0;
@@ -1039,7 +1178,21 @@ static void write_result_json(
         << ", \"lrck_half_period_mclk_min\": " << astats.lrck_half_period_mclk_min
         << ", \"lrck_half_period_mclk_max\": " << astats.lrck_half_period_mclk_max
         << ", \"avg_mclk_per_lrck_half_period\": " << astats.avg_mclk_per_lrck_half_period
-        << ", \"estimated_mclk_lrck_ratio\": " << astats.estimated_mclk_lrck_ratio << " },\n";
+        << ", \"estimated_mclk_lrck_ratio\": " << astats.estimated_mclk_lrck_ratio
+        << ", \"active_after_input\": " << (input_audio_response.active ? "true" : "false")
+        << ", \"samples_after_input\": " << input_audio_response.samples
+        << ", \"nonzero_samples_after_input\": " << input_audio_response.nonzero_samples
+        << ", \"peak_after_input\": " << input_audio_response.peak << " },\n";
+    out << "  \"input_audio_response\": ";
+    write_audio_activity_phase(out, input_audio_response, 2);
+    out << ",\n";
+    out << "  \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false") << ",\n";
+    out << "  \"audio_activity\": {\n";
+    out << "    \"schema\": \"apfsim.audio_activity.v1\",\n";
+    out << "    \"input_response\": ";
+    write_audio_activity_phase(out, input_audio_response, 4);
+    out << "\n";
+    out << "  },\n";
     const bool interact_verified = interact_verify_readback && interact_writes > 0 && interact_ok;
     const bool reset_action_seen = boot_trace.reset_enter_cycle != 0 && boot_trace.reset_exit_cycle != 0;
     out << "  \"interact\": { \"persistent_writes\": " << interact_writes
@@ -1057,6 +1210,7 @@ static void write_result_json(
         << ", \"delivered_events\": " << inputs.delivered_event_count()
         << ", \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false")
         << ", \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false")
+        << ", \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false")
         << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false")
         << ", \"key_state\": { \"cont1_key\": \"" << hex32(inputs.key_state(1))
         << "\", \"cont2_key\": \"" << hex32(inputs.key_state(2))
@@ -1085,6 +1239,7 @@ static void write_result_json(
     out << "  ],\n";
     out << "  \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false") << ",\n";
     out << "  \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false") << ",\n";
+    out << "  \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false") << ",\n";
     out << "  \"save\": { \"reports\": [\n";
     for (size_t i = 0; i < save_reports.size(); ++i) {
         const auto& report = save_reports[i];
@@ -1498,7 +1653,12 @@ static void validate_video(Assertions& asserts, const Scenario& scenario, const 
     }
 }
 
-static void validate_audio(Assertions& asserts, const Scenario& scenario, const AudioCapture& audio) {
+static void validate_audio(
+    Assertions& asserts,
+    const Scenario& scenario,
+    const AudioCapture& audio,
+    const InputDriver& inputs,
+    const AudioFrameMarkers& audio_frame_markers) {
     const auto& expect = scenario.audio_expect;
     const auto& stats = audio.stats();
     if (stats.samples < expect.min_samples) asserts.fail("audio: decoded sample count below expectation");
@@ -1520,6 +1680,11 @@ static void validate_audio(Assertions& asserts, const Scenario& scenario, const 
     if (expect.max_lrck_half_period_jitter > 0 && stats.lrck_half_period_mclk_max >= stats.lrck_half_period_mclk_min) {
         const auto jitter = stats.lrck_half_period_mclk_max - stats.lrck_half_period_mclk_min;
         if (jitter > expect.max_lrck_half_period_jitter) asserts.fail("audio: LRCK half-period jitter exceeded");
+    }
+    const auto input_response = make_input_audio_response_report(scenario, inputs, audio, audio_frame_markers);
+    if (expect.require_activity_after_input && !input_response.pass) {
+        if (!input_response.available) asserts.fail("audio: input response gate had no delivered input or frame markers");
+        else asserts.fail("audio: no activity after input");
     }
 }
 
@@ -1720,6 +1885,7 @@ int main(int argc, char** argv) {
 
         size_t interact_writes = 0;
         std::vector<SavestateReport> savestate_reports;
+        AudioFrameMarkers audio_frame_markers;
         BootTrace boot_trace;
         if (!opt.no_boot) {
             phase = "boot";
@@ -1736,11 +1902,13 @@ int main(int argc, char** argv) {
             }
             video.reset_capture();
             audio.reset_capture();
+            audio_frame_markers.clear();
         }
 
         if (!opt.dump_savestates.empty()) fs::create_directories(opt.dump_savestates);
         phase = "host_commands";
         execute_due_host_commands(bridge, scenario, savestate_reports, opt.dump_savestates, 0, sim.cycles_74a());
+        record_audio_frame_marker(audio_frame_markers, video.frames_started(), audio);
 
         if (opt.interactive) {
             phase = "play";
@@ -1759,7 +1927,7 @@ int main(int argc, char** argv) {
             write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
             std::vector<ReadbackObservation> readback_observations;
             std::vector<std::string> failures;
-            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, rc == 0, scenario, video);
             std::cout << "PASS play: frames=" << video.frames_completed() << " cycles_74a=" << sim.cycles_74a() << "\n";
             return rc;
@@ -1767,6 +1935,7 @@ int main(int argc, char** argv) {
 
         uint64_t last_frame_start = video.frames_started();
         inputs.on_frame(last_frame_start);
+        record_audio_frame_marker(audio_frame_markers, last_frame_start, audio);
         uint64_t next_target_service_cycle = opt.target_service_interval_cycles ? sim.cycles_74a() + opt.target_service_interval_cycles : 0;
         phase = "run";
         while (!context->gotFinish() && video.frames_completed() < scenario.frames && sim.cycles_74a() < scenario.timeout_cycles) {
@@ -1779,6 +1948,7 @@ int main(int argc, char** argv) {
             if (video.frames_started() != last_frame_start) {
                 last_frame_start = video.frames_started();
                 inputs.on_frame(last_frame_start);
+                record_audio_frame_marker(audio_frame_markers, last_frame_start, audio);
                 execute_due_host_commands(bridge, scenario, savestate_reports, opt.dump_savestates, last_frame_start, sim.cycles_74a());
             }
         }
@@ -1801,7 +1971,7 @@ int main(int argc, char** argv) {
         write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
 
         validate_video(asserts, scenario, video, inputs);
-        validate_audio(asserts, scenario, audio);
+        validate_audio(asserts, scenario, audio, inputs, audio_frame_markers);
         validate_data(asserts, scenario);
         validate_bridge(asserts, scenario, bridge);
         if (!opt.no_boot) validate_reset(asserts, scenario, boot_trace);
@@ -1813,12 +1983,12 @@ int main(int argc, char** argv) {
         if (!asserts.ok()) {
             asserts.print();
             print_failure_diagnostics("assert", opt.result_json, video, audio, bridge, sim.cycles_74a());
-            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, false, scenario, video);
             return 1;
         }
 
-        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
+        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
         write_video_shape_json(opt.video_shape_json, opt.result_json, true, scenario, video);
         const auto& meta = video.last_metadata();
         const auto& astats = audio.stats();

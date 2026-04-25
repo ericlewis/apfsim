@@ -126,6 +126,7 @@ The first implemented taxonomy covers the APF-facing failures that block useful 
 - `AUDIO_NO_MCLK`
 - `AUDIO_NO_LRCK`
 - `AUDIO_NO_DAC_ACTIVITY`
+- `AUDIO_NO_POST_INPUT_ACTIVITY`
 - `INPUT_NOT_OBSERVED`
 - `SAVE_SLOT_NOT_UNLOADED`
 - `SAVE_ROUNDTRIP_MISMATCH`

@@ -143,6 +143,37 @@ def test_diagnostics_suppress_static_frame_when_input_changes_video(tmp_path):
     assert "VIDEO_NO_POST_INPUT_CHANGE" not in diagnostic_codes(doc)
 
 
+def test_diagnostics_detect_missing_post_input_audio_activity(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "assert"
+    result["message"] = "audio: no activity after input"
+    result["input_audio_response"] = {
+        "name": "after_input",
+        "available": True,
+        "start_frame": 2,
+        "end_frame": 4,
+        "start_sample": 10,
+        "end_sample": 10,
+        "samples": 0,
+        "nonzero_samples": 0,
+        "peak": 0,
+        "activity": "no_samples",
+        "required": True,
+        "min_samples": 1,
+        "min_nonzero_samples": 1,
+        "min_peak": 1,
+        "active": False,
+        "pass": False,
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "AUDIO_NO_POST_INPUT_ACTIVITY" in diagnostic_codes(doc)
+
+
 def test_write_diagnostics_emits_json_and_markdown_report(tmp_path):
     artifacts = tmp_path / "run"
     write_json(artifacts / "result.json", passing_result())

@@ -50,6 +50,12 @@ struct AudioExpect {
     double expected_mclk_lrck_ratio = 0.0;
     double max_mclk_lrck_ratio_error = 0.0;
     uint64_t max_lrck_half_period_jitter = 0;
+    bool require_activity_after_input = false;
+    uint64_t input_response_delay_frames = 0;
+    uint64_t input_response_window_frames = 0;
+    size_t min_samples_after_input = 1;
+    size_t min_nonzero_samples_after_input = 1;
+    int min_peak_after_input = 1;
 };
 
 struct DataExpect {
@@ -399,6 +405,12 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "expected_mclk_lrck_ratio") scenario.audio_expect.expected_mclk_lrck_ratio = parse_double(value);
             else if (key == "max_mclk_lrck_ratio_error") scenario.audio_expect.max_mclk_lrck_ratio_error = parse_double(value);
             else if (key == "max_lrck_half_period_jitter") scenario.audio_expect.max_lrck_half_period_jitter = parse_u64(value);
+            else if (key == "require_activity_after_input" || key == "require_audio_after_input" || key == "audio_after_input") scenario.audio_expect.require_activity_after_input = parse_bool(value);
+            else if (key == "input_response_delay_frames" || key == "after_input_delay_frames") scenario.audio_expect.input_response_delay_frames = parse_u64(value);
+            else if (key == "input_response_window_frames" || key == "after_input_window_frames") scenario.audio_expect.input_response_window_frames = parse_u64(value);
+            else if (key == "min_samples_after_input") scenario.audio_expect.min_samples_after_input = static_cast<size_t>(parse_u64(value));
+            else if (key == "min_nonzero_samples_after_input") scenario.audio_expect.min_nonzero_samples_after_input = static_cast<size_t>(parse_u64(value));
+            else if (key == "min_peak_after_input") scenario.audio_expect.min_peak_after_input = static_cast<int>(parse_u64(value));
         } else if (section == Section::ExpectData) {
             if (key == "require_required_slots") scenario.data_expect.require_required_slots = parse_bool(value);
             else if (key == "require_all_file_slots_loaded") scenario.data_expect.require_all_file_slots_loaded = parse_bool(value);

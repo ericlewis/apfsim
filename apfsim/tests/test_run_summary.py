@@ -51,7 +51,38 @@ def make_artifacts(root: Path):
                 {"name": "gameplay", "required": True, "pass": True, "changed": True},
             ],
         },
-        "audio": {"activity": "active", "samples": 100, "nonzero_samples": 99, "peak": 1234},
+        "audio": {
+            "activity": "active",
+            "samples": 100,
+            "nonzero_samples": 99,
+            "peak": 1234,
+            "active_after_input": True,
+            "samples_after_input": 40,
+            "nonzero_samples_after_input": 39,
+            "peak_after_input": 900,
+        },
+        "input_audio_response": {
+            "name": "after_input",
+            "active": True,
+            "samples": 40,
+            "nonzero_samples": 39,
+            "peak": 900,
+            "required": True,
+            "pass": True,
+        },
+        "input_audio_effect_seen": True,
+        "audio_activity": {
+            "schema": "apfsim.audio_activity.v1",
+            "input_response": {
+                "name": "after_input",
+                "active": True,
+                "samples": 40,
+                "nonzero_samples": 39,
+                "peak": 900,
+                "required": True,
+                "pass": True,
+            },
+        },
         "data_load": {
             "total_loaded_bytes": 1024,
             "slots": [{"id": 1, "loaded_bytes": 1024, "crc": "0x12345678"}],
@@ -124,6 +155,11 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["active_height"] == 224
     assert row["frames_considered"] == 3
     assert row["audio_activity"] == "active"
+    assert row["input_audio_effect_seen"] is True
+    assert row["audio_active_after_input"] is True
+    assert row["audio_samples_after_input"] == 40
+    assert row["audio_nonzero_samples_after_input"] == 39
+    assert row["audio_peak_after_input"] == 900
     assert row["data_crc_list"] == ["0x12345678"]
     assert row["input_video_effect_seen"] is True
     assert row["video_changed_after_input"] is True
@@ -144,6 +180,7 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
     assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
     assert doc["video"]["changed_after_input"] is True
+    assert doc["audio"]["active_after_input"] is True
 
 
 def test_write_summary_emits_json_and_tsv(tmp_path):

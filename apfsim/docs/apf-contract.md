@@ -76,6 +76,22 @@ expect:
 
 Runs always emit `result.input_video_response`, `result.input_video_effect_seen`, and `result.video_activity` when input/video data exists. A required post-input gate failure is classified as `VIDEO_NO_POST_INPUT_CHANGE` instead of a generic static-frame warning.
 
+## Input-Driven Audio Activity
+
+Scenarios may also require decoded I2S audio activity after scripted input. This catches cores that clock audio during attract but never produce gameplay audio after coin/start.
+
+```yaml
+expect:
+  audio:
+    require_activity_after_input: true
+    input_response_window_frames: 3
+    min_samples_after_input: 1
+    min_nonzero_samples_after_input: 1
+    min_peak_after_input: 1
+```
+
+Runs emit `result.input_audio_response`, `result.input_audio_effect_seen`, and `result.audio_activity`. A required post-input audio gate failure is classified as `AUDIO_NO_POST_INPUT_ACTIVITY`.
+
 ## Runtime Lifecycle Injection
 
 Scenarios may include `host_commands:` entries to reproduce Pocket runtime behavior observed in hardware logs. Supported command names include numeric command words plus readable names such as `os_notify_menu_state`, `os_notify_cartridge_adapter`, `os_notify_docked_state`, `os_notify_display_mode`, `data_slot_update`, and `savestate_save`.

@@ -122,6 +122,7 @@ Read these first:
 | Input injection smoke | Prove scripted gamepad bits are driven into APF controller pins. | `result.input.input_trace`, `result.input.input_effect_seen`, top-level `result.input_trace`, top-level `result.input_effect_seen` |
 | Frame changed after input/start | Distinguish static attract/video from post-input gameplay response. | `result.input_video_response`, `result.input_video_effect_seen`, `result.video_activity.input_response`, `result.video_activity.phases[]`, `summary.row.video_changed_after_input`, `summary.row.video_activity_phase_failures` |
 | Audio activity report | Distinguish no clock, no LRCK, silence, stuck sample, and active waveform. | `result.audio.activity`, `result.audio.nonzero_samples`, `result.audio.peak`, `result.audio.mclk_seen`, `result.audio.lrclk_seen`, `audio/stats.json` |
+| Audio changed after input/start | Distinguish silent attract from post-input gameplay audio. | `result.input_audio_response`, `result.input_audio_effect_seen`, `result.audio_activity.input_response`, `result.audio.active_after_input`, `summary.row.audio_active_after_input`, `summary.row.audio_nonzero_samples_after_input` |
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `has_address`, `file_exists`, `load_status`, `load_error`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
 | Shim/source provenance | Make sim-only VHDL, primitive shims, and memory model libraries visible in pass results. | `source_provenance.shimmed_modules[]`, `kind`, `confidence`, `modules`, `memory_classes`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
@@ -148,6 +149,9 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `video_changed_after_input`
 - `video_activity_phase_failures`
 - `audio_activity`
+- `input_audio_effect_seen`
+- `audio_active_after_input`
+- `audio_nonzero_samples_after_input`
 - `loaded_bytes_total`
 - `data_crc_list`
 - `shimmed_modules`

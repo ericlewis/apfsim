@@ -65,6 +65,11 @@ public:
 
     const AudioStats& stats() const { return stats_; }
     size_t sample_count() const { return samples_.size(); }
+    AudioStats stats_for_sample_range(size_t start, size_t end = 0) const {
+        if (end == 0 || end > samples_.size()) end = samples_.size();
+        if (start > end) start = end;
+        return compute_stats_for_range(start, end);
+    }
 
     void reset_capture() {
         current_lrck_ = false;
@@ -125,9 +130,15 @@ private:
     }
 
     AudioStats compute_stats() const {
+        return compute_stats_for_range(0, samples_.size());
+    }
+
+    AudioStats compute_stats_for_range(size_t start, size_t end) const {
         AudioStats s;
         s.sample_rate = expected_sample_rate_;
-        s.samples = samples_.size();
+        if (end > samples_.size()) end = samples_.size();
+        if (start > end) start = end;
+        s.samples = end - start;
         s.mclk_edges = mclk_edges_;
         s.lrck_edges = lrck_edges_;
         s.mclk_seen = mclk_edges_ > 0;
@@ -138,7 +149,7 @@ private:
             s.avg_mclk_per_lrck_half_period = static_cast<double>(lrck_half_period_total_) / static_cast<double>(lrck_half_periods_recorded_);
             s.estimated_mclk_lrck_ratio = s.avg_mclk_per_lrck_half_period * 2.0;
         }
-        if (samples_.empty()) {
+        if (s.samples == 0) {
             s.activity = !s.mclk_seen ? "no_mclk" : (!s.lrclk_seen ? "no_lrclk" : "no_samples");
             return s;
         }
@@ -146,7 +157,8 @@ private:
         int64_t sum_r = 0;
         s.min_l = s.min_r = std::numeric_limits<int16_t>::max();
         s.max_l = s.max_r = std::numeric_limits<int16_t>::min();
-        for (const auto& sample : samples_) {
+        for (size_t i = start; i < end; ++i) {
+            const auto& sample = samples_[i];
             s.min_l = std::min(s.min_l, sample.l);
             s.max_l = std::max(s.max_l, sample.l);
             s.min_r = std::min(s.min_r, sample.r);
@@ -159,8 +171,8 @@ private:
                 ++s.clipped_samples;
             }
         }
-        s.dc_offset_l = static_cast<double>(sum_l) / static_cast<double>(samples_.size());
-        s.dc_offset_r = static_cast<double>(sum_r) / static_cast<double>(samples_.size());
+        s.dc_offset_l = static_cast<double>(sum_l) / static_cast<double>(s.samples);
+        s.dc_offset_r = static_cast<double>(sum_r) / static_cast<double>(s.samples);
         s.peak_to_peak_l = static_cast<int32_t>(s.max_l) - static_cast<int32_t>(s.min_l);
         s.peak_to_peak_r = static_cast<int32_t>(s.max_r) - static_cast<int32_t>(s.min_r);
         s.peak = std::max({
