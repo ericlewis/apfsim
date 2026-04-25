@@ -25,6 +25,22 @@ Generated profiles and discovery reports may include:
         "source": "rtl_shims/sdram_sim.sv"
       }
     },
+    "rom_regions": [
+      {
+        "slot_id": 1,
+        "file": "game.rom",
+        "source_offset": 0,
+        "length": 65536,
+        "memory_class": "sdram",
+        "bank": 0,
+        "base_addr": 0,
+        "address_unit": "word",
+        "word_bytes": 2,
+        "endianness": "little",
+        "byte_lanes": ["low", "high"],
+        "confidence": "generator_exact"
+      }
+    ],
     "risks": [
       {
         "code": "SDRAM_TIMING_NOT_POCKET_LIKE",
@@ -50,6 +66,7 @@ Every diagnosed run also writes `memory_activity.json`:
 - `models`: selected model names and confidence.
 - `selected_shims`: catalog entries that contributed memory models.
 - `wrapper_generation`: generated scaffold path/classes/modules.
+- `rom_regions`: exact generator-declared file regions in external RAM. These override heuristic source attribution for ROM mismatch, uninitialized-read, and coverage-gap counters.
 - `declared_counters`: public counter names declared by the generated scaffold.
 - `counter_status`: `declared_not_observed`, `observed`, or `none`.
 - `counters`: live counter values when a wrapper exposes standard top-level memory counter ports.
@@ -153,7 +170,7 @@ After a run, `memory_activity.json.observed` should be `true` if the wrapper exp
 - `sdram_rom_coverage_gap_count` counts reads outside the ROM-backed coverage map. This is useful for identifying partial or wrong ROM payloads without treating every dummy smoke file as physical SDRAM corruption.
 - `sdram_rom_unwritten_read_count` is a hard error: the core read a ROM-backed address before the physical SDRAM write path made that word valid.
 - `sdram_rom_mismatch_count` is a hard error: physical SDRAM data differed from the expected ROM-backed word at a read address.
-- `memory_activity.rom_validation.events[]` adds source attribution for those counters. The address mapping is heuristic unless a family wrapper provides an exact map: it records whether the model word address matched a slot bridge range, a word offset inside a single loaded slot, or only an unmatched candidate list.
+- `memory_activity.rom_validation.events[]` adds source attribution for those counters. When `memory.rom_regions[]` is present, the mapping is exact and reports `source.rule = profile_rom_region`. Without regions, attribution remains heuristic: it records whether the model word address matched a slot bridge range, a word offset inside a single loaded slot, or only an unmatched candidate list.
 - First-error evidence includes the SDRAM flat address, bank, expected/actual word where applicable, and DQM byte-lane mask. Diagnostics also include loaded slot/file candidates so generator tooling can connect a failing SDRAM read back to the APF payload selection.
 
 ## External RAM Direction

@@ -30,6 +30,10 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _text(value: Any) -> str:
+    return str(value) if value not in (None, "") else ""
+
+
 def counter_value(counters: list[dict[str, Any]], name: str, default: int = 0) -> int:
     for item in counters:
         if isinstance(item, dict) and str(item.get("name") or "") == name:
@@ -60,6 +64,14 @@ def loaded_slot_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
+def rom_regions(memory_activity: dict[str, Any]) -> list[dict[str, Any]]:
+    regions: list[dict[str, Any]] = []
+    for region in _list(memory_activity.get("rom_regions")):
+        if isinstance(region, dict):
+            regions.append(region)
+    return regions
+
+
 def byte_lanes_from_dqm(dqm: int, source_offset: int | None = None) -> dict[str, Any]:
     lanes: list[dict[str, Any]] = []
     checked = {"low": (dqm & 0x1) == 0, "high": (dqm & 0x2) == 0}
@@ -78,6 +90,62 @@ def byte_lanes_from_dqm(dqm: int, source_offset: int | None = None) -> dict[str,
         "checked": checked,
         "lanes": lanes,
         "names": [lane["name"] for lane in lanes],
+    }
+
+
+def _region_match(region: dict[str, Any], first_addr: int, memory_class: str) -> dict[str, Any] | None:
+    region_class = _text(region.get("memory_class", region.get("class", memory_class)))
+    if region_class and memory_class and region_class != memory_class:
+        return None
+
+    word_bytes = _as_int(region.get("word_bytes", region.get("data_bytes", 2)), 2)
+    if word_bytes <= 0:
+        word_bytes = 2
+    event_bank = first_addr >> 22
+    if "bank" in region:
+        bank = _as_int(region.get("bank"), -1)
+        if bank >= 0 and bank != event_bank:
+            return None
+
+    unit = _text(region.get("address_unit", "word")).lower()
+    base_addr = _as_int(region.get("base_addr", region.get("address", 0)))
+    if unit in {"byte", "bytes"}:
+        byte_address = first_addr * word_bytes
+        byte_offset = byte_address - base_addr
+    else:
+        byte_address = first_addr * word_bytes
+        byte_offset = (first_addr - base_addr) * word_bytes
+
+    length = _as_int(region.get("length", region.get("size", region.get("loaded_bytes", 0))))
+    if length <= 0 or byte_offset < 0 or byte_offset >= length:
+        return None
+
+    source_base = _as_int(region.get("source_offset", region.get("file_offset", 0)))
+    source_offset = source_base + byte_offset
+    return {
+        "matched": True,
+        "exact": True,
+        "confidence": region.get("confidence", "generator_exact"),
+        "rule": "profile_rom_region",
+        "slot_id": region.get("slot_id", region.get("id")),
+        "slot_name": region.get("slot_name", region.get("name", "")),
+        "file": _text(region.get("file", region.get("path", ""))),
+        "memory_class": region_class or memory_class,
+        "bank": event_bank,
+        "region_bank": region.get("bank"),
+        "region_base_addr": base_addr,
+        "region_address_unit": unit or "word",
+        "region_length": length,
+        "region_word_bytes": word_bytes,
+        "memory_offset": byte_offset,
+        "memory_offset_hex": f"0x{byte_offset:08x}",
+        "source_offset": source_offset,
+        "source_offset_hex": f"0x{source_offset:08x}",
+        "first_addr": first_addr,
+        "byte_address": byte_address,
+        "endianness": region.get("endianness", ""),
+        "byte_lanes_declared": region.get("byte_lanes", []),
+        "region": region,
     }
 
 
@@ -103,13 +171,35 @@ def _slot_match(slot: dict[str, Any], source_offset: int, rule: str, confidence:
     }
 
 
-def attribute_memory_address(first_addr: int, result: dict[str, Any]) -> dict[str, Any]:
+def attribute_memory_address(
+    first_addr: int,
+    result: dict[str, Any],
+    *,
+    memory_class: str = "sdram",
+    rom_region_list: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Best-effort mapping from a model address to a loaded data-slot offset.
 
     External RAM models often report controller word addresses while APF data
     slots report bridge byte addresses. The attribution therefore records the
     rule and confidence instead of pretending every family uses the same map.
+    When a profile supplies ``memory.rom_regions[]`` this prefers exact
+    generator-owned region matches over heuristics.
     """
+    regions = rom_region_list or []
+    region_matches = [
+        match for region in regions
+        if isinstance(region, dict)
+        for match in [_region_match(region, first_addr, memory_class)]
+        if match is not None
+    ]
+    if region_matches:
+        region_matches.sort(key=lambda item: (str(item.get("slot_id")), int(item.get("source_offset", 0))))
+        best = dict(region_matches[0])
+        best["source_candidates"] = region_matches[:5]
+        best["rom_regions"] = regions
+        return best
+
     slots = loaded_slot_candidates(result)
     matches: list[dict[str, Any]] = []
     for slot in slots:
@@ -138,6 +228,7 @@ def attribute_memory_address(first_addr: int, result: dict[str, Any]) -> dict[st
             "first_addr": first_addr,
             "byte_address": first_addr * 2,
             "source_candidates": slots,
+            "rom_regions": regions,
         }
 
     if len(slots) == 1:
@@ -164,11 +255,12 @@ def _event(
     class_name: str,
     result: dict[str, Any],
     severity: str,
+    rom_region_list: list[dict[str, Any]],
     expected_word: int | None = None,
     actual_word: int | None = None,
     dqm: int | None = None,
 ) -> dict[str, Any]:
-    source = attribute_memory_address(first_addr, result)
+    source = attribute_memory_address(first_addr, result, memory_class=class_name, rom_region_list=rom_region_list)
     source_offset = source.get("source_offset") if source.get("matched") else None
     lanes = byte_lanes_from_dqm(dqm if dqm is not None else 3, source_offset if isinstance(source_offset, int) else None)
     doc: dict[str, Any] = {
@@ -186,6 +278,7 @@ def _event(
         "byte_lanes": lanes,
         "source": source,
         "source_slot_candidates": loaded_slot_candidates(result),
+        "rom_regions": rom_region_list,
     }
     if expected_word is not None:
         doc["expected_word"] = expected_word
@@ -200,6 +293,7 @@ def _event(
 
 def build_rom_validation(memory_activity: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     counters = [item for item in _list(memory_activity.get("counters")) if isinstance(item, dict)]
+    regions = rom_regions(memory_activity)
     events: list[dict[str, Any]] = []
 
     mismatch_count = counter_value(counters, "sdram_rom_mismatch_count")
@@ -212,6 +306,7 @@ def build_rom_validation(memory_activity: dict[str, Any], result: dict[str, Any]
             class_name="sdram",
             result=result,
             severity="error",
+            rom_region_list=regions,
             expected_word=counter_value(counters, "sdram_first_rom_mismatch_expected"),
             actual_word=counter_value(counters, "sdram_first_rom_mismatch_actual"),
             dqm=counter_value(counters, "sdram_first_rom_mismatch_dqm", 3),
@@ -227,6 +322,7 @@ def build_rom_validation(memory_activity: dict[str, Any], result: dict[str, Any]
             class_name="sdram",
             result=result,
             severity="error",
+            rom_region_list=regions,
             expected_word=counter_value(counters, "sdram_first_rom_unwritten_expected"),
             dqm=counter_value(counters, "sdram_first_rom_unwritten_dqm", 3),
         ))
@@ -241,11 +337,13 @@ def build_rom_validation(memory_activity: dict[str, Any], result: dict[str, Any]
             class_name="sdram",
             result=result,
             severity="warning",
+            rom_region_list=regions,
         ))
 
     first_error = next((event for event in events if event.get("severity") == "error"), None)
     return {
         "schema": ROM_EVENT_SCHEMA,
+        "rom_regions": regions,
         "events": events,
         "first_error": first_error or (events[0] if events else None),
     }

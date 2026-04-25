@@ -847,7 +847,11 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
         item for item in result_memory.get("counters", [])
         if isinstance(item, dict) and str(item.get("name", ""))
     ]
-    rom_validation = build_rom_validation({"counters": runtime_counters}, result)
+    rom_regions = [
+        item for item in memory_dependencies.get("rom_regions", [])
+        if isinstance(item, dict)
+    ]
+    rom_validation = build_rom_validation({"counters": runtime_counters, "rom_regions": rom_regions}, result)
     enriched_runtime_errors = []
     for error in runtime_errors:
         enriched = dict(error)
@@ -871,6 +875,7 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
         "declared_counters": declared_counters,
         "counter_status": "observed" if observed else ("declared_not_observed" if declared_counters else "none"),
         "counters": runtime_counters if observed else [],
+        "rom_regions": rom_regions,
         "rom_validation": rom_validation,
         "errors": errors + enriched_runtime_errors,
         "notes": [

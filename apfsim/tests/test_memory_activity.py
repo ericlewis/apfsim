@@ -12,6 +12,7 @@ CLI = ROOT / "bin" / "apfsim"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from apfsim_cli import Profile, write_source_provenance
+from memory_attribution import build_rom_validation
 
 
 def test_source_provenance_keeps_generated_sim_only_and_memory_counter_declarations(tmp_path):
@@ -211,6 +212,116 @@ def test_memory_activity_attributes_sdram_rom_error_to_loaded_slot(tmp_path):
     assert event["source"]["source_offset"] == 8
     assert event["byte_lanes"]["names"] == ["high"]
     assert memory["errors"][0]["first_event"]["source"]["source_offset"] == 8
+
+
+def test_memory_activity_prefers_exact_profile_rom_region(tmp_path):
+    root = tmp_path / "core"
+    root.mkdir()
+    profile_path = tmp_path / "profiles" / "fake.json"
+    profile_path.parent.mkdir()
+    raw = {
+        "name": "fake",
+        "top": "core_top",
+        "filelist": "{profile_dir}/filelist.f",
+        "scenario": "{profile_dir}/scenario.yml",
+        "root": str(root),
+        "memory": {
+            "classes": ["sdram"],
+            "external_classes": ["sdram"],
+            "models": {"sdram": {"selected": "sdram_pin_model", "confidence": "observed"}},
+            "rom_regions": [
+                {
+                    "slot_id": 1,
+                    "file": "game.rom",
+                    "source_offset": 0x100,
+                    "length": 64,
+                    "memory_class": "sdram",
+                    "bank": 0,
+                    "base_addr": 4,
+                    "address_unit": "word",
+                    "endianness": "little",
+                    "byte_lanes": ["low", "high"],
+                    "confidence": "generator_exact",
+                }
+            ],
+            "risks": [],
+        },
+        "wrapper_generation": {"memory_models": {"activity_counters": ["sdram_rom_mismatch_count"]}},
+    }
+    artifacts = tmp_path / "run"
+    artifacts.mkdir()
+    (artifacts / "result.json").write_text(json.dumps({
+        "ok": False,
+        "data_load": {
+            "total_loaded_bytes": 4096,
+            "slots": [{
+                "id": 1,
+                "name": "ROM",
+                "path": "game.rom",
+                "address": "0x10000000",
+                "has_address": True,
+                "loaded_bytes": 4096,
+            }],
+        },
+        "memory_activity": {
+            "schema": "apfsim.memory_activity.runtime.v1",
+            "observed": True,
+            "counters": [
+                {"name": "sdram_rom_mismatch_count", "class": "sdram", "value": 1, "error": True, "error_code": "MEMORY_ROM_WRITE_MISMATCH"},
+                {"name": "sdram_first_rom_mismatch_addr", "class": "sdram", "value": 6, "error": False},
+                {"name": "sdram_first_rom_mismatch_expected", "class": "sdram", "value": 0x1122, "error": False},
+                {"name": "sdram_first_rom_mismatch_actual", "class": "sdram", "value": 0x3344, "error": False},
+                {"name": "sdram_first_rom_mismatch_dqm", "class": "sdram", "value": 0, "error": False},
+            ],
+            "errors": [
+                {"code": "MEMORY_ROM_WRITE_MISMATCH", "severity": "error", "counter": "sdram_rom_mismatch_count", "class": "sdram", "value": 1, "observed": True},
+            ],
+        },
+    }))
+    profile = Profile(name="fake", path=profile_path, raw=raw, root=root)
+
+    write_source_provenance(profile, artifacts)
+
+    memory = json.loads((artifacts / "memory_activity.json").read_text())
+    event = memory["rom_validation"]["first_error"]
+    assert memory["rom_regions"] == raw["memory"]["rom_regions"]
+    assert event["source"]["rule"] == "profile_rom_region"
+    assert event["source"]["exact"] is True
+    assert event["source"]["slot_id"] == 1
+    assert event["source"]["file"] == "game.rom"
+    assert event["source"]["memory_offset"] == 4
+    assert event["source"]["source_offset"] == 0x104
+    assert event["byte_lanes"]["lanes"][0]["source_offset"] == 0x104
+    assert event["byte_lanes"]["lanes"][1]["source_offset"] == 0x105
+
+
+def test_rom_region_bank_mismatch_stays_unmatched():
+    doc = build_rom_validation(
+        {
+            "rom_regions": [
+                {
+                    "slot_id": 1,
+                    "file": "game.rom",
+                    "source_offset": 0,
+                    "length": 32,
+                    "memory_class": "sdram",
+                    "bank": 0,
+                    "base_addr": 0,
+                    "address_unit": "word",
+                }
+            ],
+            "counters": [
+                {"name": "sdram_rom_coverage_gap_count", "value": 1},
+                {"name": "sdram_first_coverage_gap_addr", "value": 1 << 22},
+            ],
+        },
+        {},
+    )
+
+    event = doc["first_error"]
+    assert event["code"] == "MEMORY_ROM_COVERAGE_GAP"
+    assert event["source"]["matched"] is False
+    assert event["source"]["rom_regions"][0]["file"] == "game.rom"
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")

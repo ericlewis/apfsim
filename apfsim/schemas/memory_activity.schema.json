@@ -13,6 +13,11 @@
     "models": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
     "selected_shims": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
     "wrapper_generation": { "type": "object", "additionalProperties": true },
+    "rom_regions": {
+      "description": "Exact profile-declared ROM/source-file regions in external RAM address space.",
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
     "counters": {
       "type": "array",
       "items": {
