@@ -49,6 +49,33 @@ Every run emits `result.json.video_shape` and `video_shape.json`. The stable con
 
 Use `bin/apfsim compare-video-json` to compare simulated APF output against generated `video.json`, and `bin/apfsim apply-video-shape` to patch generated metadata when simulation discovers a mismatch.
 
+## Input-Driven Video Activity
+
+Scenarios may require video to change after scripted input. This is useful for cores where attract mode is static but gameplay should visibly change after coin/start.
+
+```yaml
+inputs:
+  - frame: 2
+    player: 1
+    button: Select
+    hold_frames: 1
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 1
+phases:
+  - name: gameplay
+    after_input: true
+    duration_frames: 3
+    require_changed: true
+expect:
+  video:
+    require_change_after_input: true
+    input_response_window_frames: 3
+```
+
+Runs always emit `result.input_video_response`, `result.input_video_effect_seen`, and `result.video_activity` when input/video data exists. A required post-input gate failure is classified as `VIDEO_NO_POST_INPUT_CHANGE` instead of a generic static-frame warning.
+
 ## Runtime Lifecycle Injection
 
 Scenarios may include `host_commands:` entries to reproduce Pocket runtime behavior observed in hardware logs. Supported command names include numeric command words plus readable names such as `os_notify_menu_state`, `os_notify_cartridge_adapter`, `os_notify_docked_state`, `os_notify_display_mode`, `data_slot_update`, and `savestate_save`.

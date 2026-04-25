@@ -34,6 +34,7 @@ KNOWN_CODES = (
     "VIDEO_NO_CLOCK",
     "VIDEO_NO_DE",
     "VIDEO_STATIC_FRAME",
+    "VIDEO_NO_POST_INPUT_CHANGE",
     "VIDEO_WIDTH_MISMATCH",
     "VIDEO_HEIGHT_MISMATCH",
     "VIDEO_PROTOCOL_ERROR",
@@ -945,7 +946,87 @@ def _diagnose_video(
     unique_colors = _as_int(video.get("unique_colors"), 0)
     changed_frames = _as_int(video.get("changed_frames"), 0)
     nonzero_pixels = _as_int(video.get("nonzero_pixels"), 0)
-    if frames >= 2 and width > 0 and height > 0 and (unique_colors <= 1 or nonzero_pixels <= 0):
+    activity = _obj(result.get("video_activity"))
+    input_response = _obj(result.get("input_video_response")) or _obj(activity.get("input_response"))
+    input_response_changed = _as_bool(input_response.get("changed"), False)
+    named_phase_changed = any(
+        isinstance(phase, dict) and _as_bool(phase.get("changed"), False)
+        for phase in _list(activity.get("phases"))
+    )
+    if input_response and _as_bool(input_response.get("required", input_response.get("require_changed")), False) and not _as_bool(input_response.get("pass"), True):
+        _diag(
+            items,
+            code="VIDEO_NO_POST_INPUT_CHANGE",
+            phase="video",
+            severity="error",
+            summary="No frame changed inside the configured post-input response window.",
+            observed={
+                "name": input_response.get("name"),
+                "available": input_response.get("available"),
+                "start_frame": input_response.get("start_frame"),
+                "end_frame": input_response.get("end_frame"),
+                "frames_considered": input_response.get("frames_considered"),
+                "changed_frames": input_response.get("changed_frames"),
+                "max_changed_pixels": input_response.get("max_changed_pixels"),
+            },
+            expected={
+                "min_changed_frames": input_response.get("min_changed_frames"),
+                "min_changed_pixels": input_response.get("min_changed_pixels"),
+            },
+            evidence=[{"artifact": "result.json", "json_pointer": "/input_video_response"}],
+            likely_causes=[
+                "coin/start input did not reach the gameplay core",
+                "core remained in attract/static mode after input",
+                "ROM or CPU path is running but gameplay state did not advance",
+            ],
+            repairs=[
+                {
+                    "kind": "wrapper_or_scenario_patch",
+                    "confidence": 0.67,
+                    "description": "Verify controller bit mapping and extend the post-input response window if this game changes later than the current scenario allows.",
+                }
+            ],
+        )
+
+    for index, phase in enumerate(_list(activity.get("phases"))):
+        if not isinstance(phase, dict):
+            continue
+        if _as_bool(phase.get("required", phase.get("require_changed")), False) and not _as_bool(phase.get("pass"), True):
+            _diag(
+                items,
+                code="VIDEO_NO_POST_INPUT_CHANGE",
+                phase="video",
+                severity="error",
+                summary=f"Required video activity phase did not change: {phase.get('name') or index}.",
+                observed={
+                    "name": phase.get("name"),
+                    "available": phase.get("available"),
+                    "start_frame": phase.get("start_frame"),
+                    "end_frame": phase.get("end_frame"),
+                    "frames_considered": phase.get("frames_considered"),
+                    "changed_frames": phase.get("changed_frames"),
+                    "max_changed_pixels": phase.get("max_changed_pixels"),
+                },
+                expected={
+                    "min_changed_frames": phase.get("min_changed_frames"),
+                    "min_changed_pixels": phase.get("min_changed_pixels"),
+                },
+                evidence=[{"artifact": "result.json", "json_pointer": f"/video_activity/phases/{index}"}],
+                likely_causes=[
+                    "named scenario phase starts before the input effect is visible",
+                    "scripted input did not transition the core out of its static state",
+                    "gameplay/video state is blocked by data-load, reset, or input mapping",
+                ],
+                repairs=[
+                    {
+                        "kind": "wrapper_or_scenario_patch",
+                        "confidence": 0.64,
+                        "description": "Check controller mapping and tune the named phase start/window after confirming real gameplay timing.",
+                    }
+                ],
+            )
+
+    if frames >= 2 and width > 0 and height > 0 and not (input_response_changed or named_phase_changed) and (unique_colors <= 1 or nonzero_pixels <= 0):
         _diag(
             items,
             code="VIDEO_STATIC_FRAME",
@@ -984,10 +1065,10 @@ def _diagnose_assert_failure(
     input_doc: dict[str, Any],
     save: dict[str, Any],
 ) -> None:
+    lower = message.lower()
     if failed_phase != "assert":
         return
-    lower = message.lower()
-    if "video" in lower and "frame" in lower:
+    if "video" in lower and ("frame count" in lower or "required frame" in lower):
         _diag(
             items,
             code="VIDEO_FRAME_COUNT_MISMATCH",

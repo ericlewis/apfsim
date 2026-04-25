@@ -120,6 +120,7 @@ Read these first:
 | First video protocol failure window | Make protocol failures actionable without opening a full waveform. | `result.video_protocol.first_error_cycle`, `result.video_protocol.first_error_code`, `result.video_protocol.trace_window`, mirrored in `video_shape` |
 | Control-plane write/read probe | Catch interact persistence and reset-action failures before hardware. | `result.interact_readback`, `result.reset_action_seen`, `result.control_plane`, `bridge_transactions.jsonl` when `--bridge-trace` is enabled |
 | Input injection smoke | Prove scripted gamepad bits are driven into APF controller pins. | `result.input.input_trace`, `result.input.input_effect_seen`, top-level `result.input_trace`, top-level `result.input_effect_seen` |
+| Frame changed after input/start | Distinguish static attract/video from post-input gameplay response. | `result.input_video_response`, `result.input_video_effect_seen`, `result.video_activity.input_response`, `result.video_activity.phases[]`, `summary.row.video_changed_after_input`, `summary.row.video_activity_phase_failures` |
 | Audio activity report | Distinguish no clock, no LRCK, silence, stuck sample, and active waveform. | `result.audio.activity`, `result.audio.nonzero_samples`, `result.audio.peak`, `result.audio.mclk_seen`, `result.audio.lrclk_seen`, `audio/stats.json` |
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `has_address`, `file_exists`, `load_status`, `load_error`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
@@ -143,6 +144,9 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `active_height`
 - `frames_considered`
 - `video_protocol_valid`
+- `input_video_effect_seen`
+- `video_changed_after_input`
+- `video_activity_phase_failures`
 - `audio_activity`
 - `loaded_bytes_total`
 - `data_crc_list`

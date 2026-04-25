@@ -33,6 +33,7 @@ A profile run writes a stable artifact directory. Important files:
 - `savestate.reports`: support/query/start/final results, response address/size, copied byte count, checksum, poll count, and saved path for `savestate_save` events.
 - `data_load`: slot ids, paths, address presence, file existence, load status/error, loaded byte counts, CRC32, FNV-1a checksums, optional APF bridge readback CRC/mismatch fields, and all-complete status.
 - `video_protocol`: first APF video protocol error cycle and suggested trace window.
+- `input_video_response`, `input_video_effect_seen`, and `video_activity`: frame-change-after-input measurements and optional named scenario phases, schema `apfsim.video_activity.v1`. Use this to distinguish a static attract screen from gameplay/video state that changes after coin/start input.
 - `interact_readback`, `reset_action_seen`, and `control_plane`: compact control-plane probes.
 - `input_trace` and `input_effect_seen`: scripted input delivery summary.
 - `audio.activity`, `nonzero_samples`, `peak`, `mclk_seen`, and `lrclk_seen`: compact audio activity classification.

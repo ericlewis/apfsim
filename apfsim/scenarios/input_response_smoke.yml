@@ -1,0 +1,42 @@
+name: mock_input_response_smoke
+data_slots:
+  - id: 1
+    name: ROM
+    file: examples/assets/mock.rom
+    address: 0x10000000
+    required: true
+inputs:
+  - frame: 2
+    player: 1
+    button: Select
+    hold_frames: 1
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 1
+phases:
+  - name: attract
+    start_frame: 1
+    end_frame: 1
+  - name: gameplay
+    after_input: true
+    duration_frames: 3
+    require_changed: true
+    min_changed_frames: 1
+    min_changed_pixels: 1
+run:
+  until_frames: 5
+  timeout_cycles: 5000000
+expect:
+  video:
+    active_width: 256
+    active_height: 224
+    min_frames: 5
+    require_change_after_input: true
+    input_response_window_frames: 3
+    min_changed_frames_after_input: 1
+    min_changed_pixels_after_input: 1
+  input:
+    require_scripted_activity: true
+  audio:
+    min_samples: 1

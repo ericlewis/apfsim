@@ -93,6 +93,56 @@ def test_diagnostics_detect_video_extra_active_pixel(tmp_path):
     assert item["repairs"][0]["kind"] == "wrapper_patch"
 
 
+def test_diagnostics_detect_missing_post_input_video_change(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["ok"] = False
+    result["failed_phase"] = "assert"
+    result["message"] = "video: no frame changed after input"
+    result["input_video_response"] = {
+        "name": "after_input",
+        "available": True,
+        "start_frame": 2,
+        "end_frame": 4,
+        "frames_considered": 3,
+        "changed_frames": 0,
+        "max_changed_pixels": 0,
+        "required": True,
+        "min_changed_frames": 1,
+        "min_changed_pixels": 1,
+        "changed": False,
+        "pass": False,
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "VIDEO_NO_POST_INPUT_CHANGE" in diagnostic_codes(doc)
+    assert "VIDEO_FRAME_COUNT_MISMATCH" not in diagnostic_codes(doc)
+
+
+def test_diagnostics_suppress_static_frame_when_input_changes_video(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["video"]["unique_colors"] = 1
+    result["video"]["nonzero_pixels"] = 0
+    result["video"]["changed_frames"] = 0
+    result["input_video_response"] = {
+        "name": "after_input",
+        "changed": True,
+        "changed_frames": 1,
+        "max_changed_pixels": 128,
+        "required": True,
+        "pass": True,
+    }
+    write_json(artifacts / "result.json", result)
+
+    doc = diagnose_artifacts(artifacts)
+
+    assert "VIDEO_STATIC_FRAME" not in diagnostic_codes(doc)
+    assert "VIDEO_NO_POST_INPUT_CHANGE" not in diagnostic_codes(doc)
+
+
 def test_write_diagnostics_emits_json_and_markdown_report(tmp_path):
     artifacts = tmp_path / "run"
     write_json(artifacts / "result.json", passing_result())

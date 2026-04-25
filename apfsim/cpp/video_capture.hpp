@@ -87,6 +87,41 @@ public:
     uint64_t frames_completed() const { return frames_completed_; }
     uint64_t changed_frames() const { return changed_frames_; }
     uint64_t max_changed_pixels_from_previous() const { return max_changed_pixels_from_previous_; }
+    uint64_t frames_in_range(uint64_t start_frame, uint64_t end_frame = 0) const {
+        uint64_t count = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            ++count;
+        }
+        return count;
+    }
+    uint64_t changed_frames_in_range(uint64_t start_frame, uint64_t end_frame = 0, uint64_t min_changed_pixels = 1) const {
+        uint64_t count = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            if (frame.changed_pixels_from_previous >= min_changed_pixels) ++count;
+        }
+        return count;
+    }
+    uint64_t max_changed_pixels_in_range(uint64_t start_frame, uint64_t end_frame = 0) const {
+        uint64_t max_changed = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            max_changed = std::max(max_changed, frame.changed_pixels_from_previous);
+        }
+        return max_changed;
+    }
+    uint64_t first_changed_frame_in_range(uint64_t start_frame, uint64_t end_frame = 0, uint64_t min_changed_pixels = 1) const {
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            if (frame.changed_pixels_from_previous >= min_changed_pixels) return frame.frame;
+        }
+        return 0;
+    }
     const FrameMetadata& last_metadata() const { return last_metadata_; }
     const std::vector<FrameMetadata>& frame_history() const { return frame_history_; }
     const std::vector<uint32_t>& last_frame_pixels() const { return last_frame_pixels_; }

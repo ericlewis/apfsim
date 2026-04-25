@@ -28,6 +28,11 @@ TSV_COLUMNS = [
     "data_readback_mismatches",
     "data_readback_failed_slots",
     "input_effect_seen",
+    "input_video_effect_seen",
+    "video_changed_after_input",
+    "video_changed_frames_after_input",
+    "video_max_changed_pixels_after_input",
+    "video_activity_phase_failures",
     "interact_readback_verified",
     "reset_action_seen",
     "shimmed_modules",
@@ -106,6 +111,9 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
 
     video_shape = _obj(result.get("video_shape"))
     video_protocol = _obj(result.get("video_protocol"))
+    video_doc = _obj(result.get("video"))
+    video_activity = _obj(result.get("video_activity"))
+    input_video_response = _obj(result.get("input_video_response")) or _obj(video_activity.get("input_response"))
     audio = _obj(result.get("audio"))
     data_load = _obj(result.get("data_load"))
     input_doc = _obj(result.get("input"))
@@ -159,6 +167,11 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         for slot in data_slots
         if _as_bool(slot.get("readback_attempted"), False) and not _as_bool(slot.get("readback_matches"), True)
     ]
+    video_phase_failures = [
+        str(phase.get("name") or index)
+        for index, phase in enumerate(_list(video_activity.get("phases")))
+        if isinstance(phase, dict) and _as_bool(phase.get("required", phase.get("require_changed")), False) and not _as_bool(phase.get("pass"), True)
+    ]
 
     package_errors = _list(package.get("package_errors"))
     package_warnings = _list(package.get("package_warnings"))
@@ -192,6 +205,11 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "data_readback_mismatches": data_readback_mismatches,
         "data_readback_failed_slots": data_readback_failed_slots,
         "input_effect_seen": _as_bool(result.get("input_effect_seen", input_doc.get("input_effect_seen")), False),
+        "input_video_effect_seen": _as_bool(result.get("input_video_effect_seen", input_doc.get("input_video_effect_seen")), False),
+        "video_changed_after_input": _as_bool(input_video_response.get("changed", video_doc.get("changed_after_input")), False),
+        "video_changed_frames_after_input": _as_int(input_video_response.get("changed_frames", video_doc.get("changed_frames_after_input")), 0),
+        "video_max_changed_pixels_after_input": _as_int(input_video_response.get("max_changed_pixels", video_doc.get("max_changed_pixels_after_input")), 0),
+        "video_activity_phase_failures": video_phase_failures,
         "interact_readback_verified": _as_bool(interact_readback.get("verified"), False),
         "reset_action_seen": _as_bool(result.get("reset_action_seen"), False),
         "shimmed_modules": shimmed,
@@ -230,6 +248,10 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
             "startup_frames_ignored": row["startup_frames_ignored"],
             "protocol_valid": row["video_protocol_valid"],
             "first_error_cycle": row["video_first_error_cycle"],
+            "changed_after_input": row["video_changed_after_input"],
+            "changed_frames_after_input": row["video_changed_frames_after_input"],
+            "max_changed_pixels_after_input": row["video_max_changed_pixels_after_input"],
+            "activity_phase_failures": video_phase_failures,
         },
         "audio": {
             "activity": row["audio_activity"],

@@ -26,6 +26,31 @@ def make_artifacts(root: Path):
             "protocol_valid": True,
         },
         "video_protocol": {"valid": True, "first_error_cycle": 0},
+        "video": {"changed_after_input": True, "changed_frames_after_input": 1, "max_changed_pixels_after_input": 512},
+        "input_video_response": {
+            "name": "after_input",
+            "changed": True,
+            "changed_frames": 1,
+            "max_changed_pixels": 512,
+            "required": True,
+            "pass": True,
+        },
+        "input_video_effect_seen": True,
+        "video_activity": {
+            "schema": "apfsim.video_activity.v1",
+            "input_response": {
+                "name": "after_input",
+                "changed": True,
+                "changed_frames": 1,
+                "max_changed_pixels": 512,
+                "required": True,
+                "pass": True,
+            },
+            "phases": [
+                {"name": "attract", "required": False, "pass": True},
+                {"name": "gameplay", "required": True, "pass": True, "changed": True},
+            ],
+        },
         "audio": {"activity": "active", "samples": 100, "nonzero_samples": 99, "peak": 1234},
         "data_load": {
             "total_loaded_bytes": 1024,
@@ -100,6 +125,11 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["frames_considered"] == 3
     assert row["audio_activity"] == "active"
     assert row["data_crc_list"] == ["0x12345678"]
+    assert row["input_video_effect_seen"] is True
+    assert row["video_changed_after_input"] is True
+    assert row["video_changed_frames_after_input"] == 1
+    assert row["video_max_changed_pixels_after_input"] == 512
+    assert row["video_activity_phase_failures"] == []
     assert row["shimmed_modules"] == ["intel_bram_shims"]
     assert row["shim_kinds"] == ["intel_bram_shims:behavioral_model"]
     assert row["shim_confidences"] == ["intel_bram_shims:sim_only"]
@@ -113,6 +143,7 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
     assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
     assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
+    assert doc["video"]["changed_after_input"] is True
 
 
 def test_write_summary_emits_json_and_tsv(tmp_path):

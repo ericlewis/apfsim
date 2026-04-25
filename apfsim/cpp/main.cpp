@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -239,6 +240,190 @@ struct MemoryActivitySnapshot {
     bool observed = false;
     std::vector<MemoryCounterObservation> counters;
 };
+
+struct VideoActivityPhaseReport {
+    std::string name;
+    std::string start_reason;
+    uint64_t start_frame = 0;
+    uint64_t end_frame = 0;
+    uint64_t frames_considered = 0;
+    uint64_t changed_frames = 0;
+    uint64_t max_changed_pixels = 0;
+    uint64_t first_changed_frame = 0;
+    uint64_t min_changed_frames = 0;
+    uint64_t min_changed_pixels = 0;
+    uint64_t input_event_index = 0;
+    uint64_t input_event_frame = 0;
+    bool available = true;
+    bool required = false;
+    bool changed = false;
+    bool pass = true;
+};
+
+static constexpr size_t kNoInputEvent = std::numeric_limits<size_t>::max();
+
+static size_t first_delivered_input_event_index(const Scenario& scenario, const InputDriver& inputs) {
+    size_t first = kNoInputEvent;
+    uint64_t first_frame = 0;
+    for (size_t i = 0; i < scenario.inputs.size(); ++i) {
+        if (!inputs.event_delivered(i)) continue;
+        const auto frame = scenario.inputs[i].frame;
+        if (first == kNoInputEvent || frame < first_frame) {
+            first = i;
+            first_frame = frame;
+        }
+    }
+    return first;
+}
+
+static uint64_t phase_end_frame(uint64_t start_frame, uint64_t configured_end_frame, uint64_t duration_frames) {
+    if (start_frame == 0) return 0;
+    if (duration_frames > 0) return start_frame + duration_frames - 1;
+    return configured_end_frame;
+}
+
+static VideoActivityPhaseReport make_video_activity_report(
+    const std::string& name,
+    const std::string& start_reason,
+    uint64_t start_frame,
+    uint64_t end_frame,
+    bool required,
+    uint64_t min_changed_frames,
+    uint64_t min_changed_pixels,
+    const VideoCapture& video,
+    bool available = true,
+    uint64_t input_event_index = 0,
+    uint64_t input_event_frame = 0) {
+    VideoActivityPhaseReport report;
+    report.name = name;
+    report.start_reason = start_reason;
+    report.start_frame = start_frame;
+    report.end_frame = end_frame;
+    report.required = required;
+    report.min_changed_frames = min_changed_frames;
+    report.min_changed_pixels = min_changed_pixels;
+    report.available = available;
+    report.input_event_index = input_event_index;
+    report.input_event_frame = input_event_frame;
+    if (available && start_frame > 0) {
+        report.frames_considered = video.frames_in_range(start_frame, end_frame);
+        report.changed_frames = video.changed_frames_in_range(start_frame, end_frame, min_changed_pixels);
+        report.max_changed_pixels = video.max_changed_pixels_in_range(start_frame, end_frame);
+        report.first_changed_frame = video.first_changed_frame_in_range(start_frame, end_frame, min_changed_pixels);
+        report.changed = report.changed_frames >= min_changed_frames && report.max_changed_pixels >= min_changed_pixels;
+    }
+    report.pass = !required || (report.available && report.changed);
+    return report;
+}
+
+static VideoActivityPhaseReport make_input_response_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video) {
+    const auto event_index = first_delivered_input_event_index(scenario, inputs);
+    if (event_index == kNoInputEvent) {
+        return make_video_activity_report(
+            "after_input",
+            "first_delivered_input",
+            0,
+            0,
+            scenario.video_expect.require_change_after_input,
+            scenario.video_expect.min_changed_frames_after_input,
+            scenario.video_expect.min_changed_pixels_after_input,
+            video,
+            false);
+    }
+    const uint64_t event_frame = scenario.inputs[event_index].frame;
+    const uint64_t start = event_frame + scenario.video_expect.input_response_delay_frames;
+    const uint64_t end = phase_end_frame(start, 0, scenario.video_expect.input_response_window_frames);
+    return make_video_activity_report(
+        "after_input",
+        "first_delivered_input",
+        start,
+        end,
+        scenario.video_expect.require_change_after_input,
+        scenario.video_expect.min_changed_frames_after_input,
+        scenario.video_expect.min_changed_pixels_after_input,
+        video,
+        true,
+        event_index,
+        event_frame);
+}
+
+static VideoActivityPhaseReport make_named_phase_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video,
+    const VideoPhaseExpect& phase) {
+    uint64_t start = phase.start_frame;
+    uint64_t input_event_frame = 0;
+    size_t input_event_index = kNoInputEvent;
+    std::string reason = phase.after_input ? "input_event" : "configured_frame";
+    bool available = true;
+    if (phase.after_input) {
+        if (phase.has_input_event_index) {
+            const size_t requested = static_cast<size_t>(phase.input_event_index);
+            if (requested < scenario.inputs.size() && inputs.event_delivered(requested)) input_event_index = requested;
+        } else {
+            input_event_index = first_delivered_input_event_index(scenario, inputs);
+        }
+        if (input_event_index == kNoInputEvent) {
+            available = false;
+            start = 0;
+        } else {
+            input_event_frame = scenario.inputs[input_event_index].frame;
+            start = input_event_frame + phase.input_delay_frames;
+        }
+    }
+    const uint64_t end = phase_end_frame(start, phase.end_frame, phase.duration_frames);
+    return make_video_activity_report(
+        phase.name.empty() ? "phase" : phase.name,
+        reason,
+        start,
+        end,
+        phase.require_changed,
+        phase.min_changed_frames,
+        phase.min_changed_pixels,
+        video,
+        available,
+        input_event_index == kNoInputEvent ? 0 : static_cast<uint64_t>(input_event_index),
+        input_event_frame);
+}
+
+static std::vector<VideoActivityPhaseReport> make_named_phase_reports(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video) {
+    std::vector<VideoActivityPhaseReport> reports;
+    reports.reserve(scenario.video_phases.size());
+    for (const auto& phase : scenario.video_phases) {
+        reports.push_back(make_named_phase_report(scenario, inputs, video, phase));
+    }
+    return reports;
+}
+
+static void write_video_activity_phase(std::ostream& out, const VideoActivityPhaseReport& report, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{ \"schema\": \"apfsim.video_activity_phase.v1\""
+        << ", \"name\": \"" << json_escape(report.name)
+        << "\", \"start_reason\": \"" << json_escape(report.start_reason)
+        << "\", \"available\": " << (report.available ? "true" : "false")
+        << ", \"start_frame\": " << report.start_frame
+        << ", \"end_frame\": " << report.end_frame
+        << ", \"frames_considered\": " << report.frames_considered
+        << ", \"changed_frames\": " << report.changed_frames
+        << ", \"max_changed_pixels\": " << report.max_changed_pixels
+        << ", \"first_changed_frame\": " << report.first_changed_frame
+        << ", \"required\": " << (report.required ? "true" : "false")
+        << ", \"require_changed\": " << (report.required ? "true" : "false")
+        << ", \"min_changed_frames\": " << report.min_changed_frames
+        << ", \"min_changed_pixels\": " << report.min_changed_pixels
+        << ", \"changed\": " << (report.changed ? "true" : "false")
+        << ", \"pass\": " << (report.pass ? "true" : "false")
+        << ", \"input_event_index\": " << report.input_event_index
+        << ", \"input_event_frame\": " << report.input_event_frame
+        << " }";
+}
 
 template <typename Top>
 static MemoryActivitySnapshot capture_memory_activity(Top* top) {
@@ -555,6 +740,8 @@ static void write_result_json(
     if (!out) return;
     const auto& meta = video.last_metadata();
     const auto video_agg = video.aggregate_after_startup_frames(scenario.video_expect.ignore_startup_frames);
+    const auto input_video_response = make_input_response_report(scenario, inputs, video);
+    const auto video_phase_reports = make_named_phase_reports(scenario, inputs, video);
     const auto& astats = audio.stats();
     const uint64_t validated_video_errors = video.errors_after_startup_frames(scenario.video_expect.ignore_startup_frames);
     const bool boot_ok = boot_trace.running_cycle != 0;
@@ -791,6 +978,9 @@ static void write_result_json(
         << ", \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous
         << ", \"changed_frames\": " << video.changed_frames()
         << ", \"max_changed_pixels_from_previous\": " << video.max_changed_pixels_from_previous()
+        << ", \"changed_after_input\": " << (input_video_response.changed ? "true" : "false")
+        << ", \"changed_frames_after_input\": " << input_video_response.changed_frames
+        << ", \"max_changed_pixels_after_input\": " << input_video_response.max_changed_pixels
         << ", \"frame_hash\": \"" << hex64(meta.frame_hash) << "\""
         << ", \"unstable_dimension_frames\": " << video_agg.unstable_dimension_frames
         << ", \"hs_under_active_height_frames\": " << video_agg.hs_under_active_height_frames
@@ -811,6 +1001,22 @@ static void write_result_json(
         << "\", \"trace_window\": { \"start_cycle\": " << video_trace_start
         << ", \"end_cycle\": " << video_trace_end << " }"
         << ", \"source_signals\": [\"video_rgb\", \"video_de\", \"video_hs\", \"video_vs\", \"video_skip\"] },\n";
+    out << "  \"input_video_response\": ";
+    write_video_activity_phase(out, input_video_response, 2);
+    out << ",\n";
+    out << "  \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false") << ",\n";
+    out << "  \"video_activity\": {\n";
+    out << "    \"schema\": \"apfsim.video_activity.v1\",\n";
+    out << "    \"input_response\": ";
+    write_video_activity_phase(out, input_video_response, 4);
+    out << ",\n";
+    out << "    \"phases\": [\n";
+    for (size_t i = 0; i < video_phase_reports.size(); ++i) {
+        write_video_activity_phase(out, video_phase_reports[i], 6);
+        out << (i + 1 == video_phase_reports.size() ? "\n" : ",\n");
+    }
+    out << "    ]\n";
+    out << "  },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
         << ", \"min_l\": " << astats.min_l
@@ -850,6 +1056,7 @@ static void write_result_json(
     out << "  \"input\": { \"scripted_events\": " << scenario.inputs.size()
         << ", \"delivered_events\": " << inputs.delivered_event_count()
         << ", \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false")
+        << ", \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false")
         << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false")
         << ", \"key_state\": { \"cont1_key\": \"" << hex32(inputs.key_state(1))
         << "\", \"cont2_key\": \"" << hex32(inputs.key_state(2))
@@ -877,6 +1084,7 @@ static void write_result_json(
     }
     out << "  ],\n";
     out << "  \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false") << ",\n";
+    out << "  \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false") << ",\n";
     out << "  \"save\": { \"reports\": [\n";
     for (size_t i = 0; i < save_reports.size(); ++i) {
         const auto& report = save_reports[i];
@@ -1252,7 +1460,7 @@ static void apply_data_expect_to_slots(Scenario& scenario) {
     }
 }
 
-static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video) {
+static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video, const InputDriver& inputs) {
     const auto& expect = scenario.video_expect;
     const auto& meta = video.last_metadata();
     const auto agg = video.aggregate_after_startup_frames(expect.ignore_startup_frames);
@@ -1273,6 +1481,16 @@ static void validate_video(Assertions& asserts, const Scenario& scenario, const 
     if (expect.min_nonzero_pixels && meta.nonzero_pixels < expect.min_nonzero_pixels) asserts.fail("video: nonzero pixel count below expectation");
     if (expect.min_changed_pixels && video.max_changed_pixels_from_previous() < expect.min_changed_pixels) asserts.fail("video: changed pixel count below expectation");
     if (expect.min_changed_frames && video.changed_frames() < expect.min_changed_frames) asserts.fail("video: changed frame count below expectation");
+    const auto input_response = make_input_response_report(scenario, inputs, video);
+    if (expect.require_change_after_input && !input_response.pass) {
+        if (!input_response.available) asserts.fail("video: input response gate had no delivered input");
+        else asserts.fail("video: no frame changed after input");
+    }
+    for (const auto& report : make_named_phase_reports(scenario, inputs, video)) {
+        if (report.required && !report.pass) {
+            asserts.fail("video: phase " + report.name + " did not change");
+        }
+    }
     if ((expect.min_refresh_hz || expect.max_refresh_hz) && expect.pixel_clock_hz > 0.0 && meta.total_pixel_clocks > 0) {
         const double refresh = expect.pixel_clock_hz / static_cast<double>(meta.total_pixel_clocks);
         if (expect.min_refresh_hz && refresh < expect.min_refresh_hz) asserts.fail("video: refresh below expected range");
@@ -1582,7 +1800,7 @@ int main(int argc, char** argv) {
         if (!opt.dump_saves.empty()) save_reports = bridge.unload_nonvolatile(scenario.slots, opt.dump_saves);
         write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
 
-        validate_video(asserts, scenario, video);
+        validate_video(asserts, scenario, video, inputs);
         validate_audio(asserts, scenario, audio);
         validate_data(asserts, scenario);
         validate_bridge(asserts, scenario, bridge);

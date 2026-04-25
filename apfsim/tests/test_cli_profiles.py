@@ -335,3 +335,24 @@ def test_mock_profile_run_writes_structured_artifacts(tmp_path):
     bridge_log = (artifacts / "bridge.log").read_text()
     assert "HOST CM Request Status" in bridge_log
     assert "DATASLOT load done id=1" in bridge_log
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_mock_profile_reports_frame_change_after_input(tmp_path):
+    artifacts = tmp_path / "input-response"
+    r = run_cli(
+        "run",
+        "--profile", "mock",
+        "--scenario", "scenarios/input_response_smoke.yml",
+        "--artifacts", str(artifacts),
+        timeout=180,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["input_video_effect_seen"] is True
+    assert result["input_video_response"]["changed"] is True
+    assert result["input_video_response"]["changed_frames"] >= 1
+    phases = {phase["name"]: phase for phase in result["video_activity"]["phases"]}
+    assert phases["gameplay"]["pass"] is True
+    assert phases["gameplay"]["changed"] is True

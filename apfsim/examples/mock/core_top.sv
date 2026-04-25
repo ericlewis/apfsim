@@ -104,6 +104,7 @@ module core_top (
     reg [31:0] savestate_query_count;
     reg [31:0] savestate_start_count;
     reg [3:0]  savestate_busy_count;
+    reg        gameplay_latched;
 
 `ifdef APFSIM_TARGET_COMMAND_SMOKE
     reg [3:0]  target_state;
@@ -409,6 +410,7 @@ module core_top (
         savestate_query_count = 32'h0;
         savestate_start_count = 32'h0;
         savestate_busy_count = 4'h0;
+        gameplay_latched = 1'b0;
 `ifdef APFSIM_TARGET_COMMAND_SMOKE
         target_state = 4'd0;
         target_wait = 8'd0;
@@ -442,7 +444,10 @@ module core_top (
             host_status_word <= ok_word(ST_SETUP);
         end
 
-        if (cont1_key[13:0] != 14'h0000) input_sample_count <= input_sample_count + 1'b1;
+        if (cont1_key[15:0] != 16'h0000) begin
+            input_sample_count <= input_sample_count + 1'b1;
+            gameplay_latched <= 1'b1;
+        end
 
 `ifdef APFSIM_TARGET_COMMAND_SMOKE
         if (status == ST_RUNNING && ready_ack && target_state == 4'd0) begin
@@ -592,7 +597,7 @@ module core_top (
         video_de <= active_next;
         video_skip <= 1'b0;
         if (active_next) begin
-            video_rgb <= {px[7:0], py[7:0], (px[7:0] ^ py[7:0])};
+            video_rgb <= {px[7:0] ^ {8{gameplay_latched}}, py[7:0], (px[7:0] ^ py[7:0])};
         end else begin
             video_rgb <= 24'h000000;
         end

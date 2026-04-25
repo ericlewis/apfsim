@@ -116,6 +116,7 @@ The first implemented taxonomy covers the APF-facing failures that block useful 
 - `INTERACT_WRITE_MISSING`
 - `VIDEO_NO_DE`
 - `VIDEO_STATIC_FRAME`
+- `VIDEO_NO_POST_INPUT_CHANGE`
 - `VIDEO_WIDTH_MISMATCH`
 - `VIDEO_HEIGHT_MISMATCH`
 - `VIDEO_PROTOCOL_ERROR`
