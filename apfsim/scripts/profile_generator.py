@@ -862,7 +862,7 @@ module core_top (
     assign bridge_endian_little = 1'b0;
     assign video_skip = 1'b0;
 
-    wire [15:0] sdram_dq;
+    tri  [15:0] sdram_dq;
     wire [12:0] sdram_a;
     wire [1:0]  sdram_ba;
     wire        sdram_dqml;
@@ -879,6 +879,21 @@ module core_top (
     wire [23:0] apfsim_rom_preload_addr;
     wire [15:0] apfsim_rom_preload_data;
     wire [1:0]  apfsim_rom_preload_dqm;
+    wire        apfsim_sdram_command_cycle = sdram_cke && !sdram_ncs;
+    wire        apfsim_sdram_cmd_active = apfsim_sdram_command_cycle && !sdram_nras &&  sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_read =   apfsim_sdram_command_cycle &&  sdram_nras && !sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_write =  apfsim_sdram_command_cycle &&  sdram_nras && !sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_pre =    apfsim_sdram_command_cycle && !sdram_nras &&  sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_refresh = apfsim_sdram_command_cycle && !sdram_nras && !sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_mode =   apfsim_sdram_command_cycle && !sdram_nras && !sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_bterm =  apfsim_sdram_command_cycle &&  sdram_nras &&  sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_stop_write = apfsim_sdram_cmd_active || apfsim_sdram_cmd_read ||
+                                           apfsim_sdram_cmd_pre || apfsim_sdram_cmd_refresh ||
+                                           apfsim_sdram_cmd_mode || apfsim_sdram_cmd_bterm;
+    reg  [3:0]  apfsim_sdram_burst_beats = 4'd8;
+    reg  [3:0]  apfsim_sdram_write_remaining = 4'd0;
+    wire        apfsim_sdram_write_drive = apfsim_sdram_cmd_write ||
+                                           ((apfsim_sdram_write_remaining != 4'd0) && !apfsim_sdram_stop_write);
 
     wire [COLORW-1:0] core_r;
     wire [COLORW-1:0] core_g;
@@ -948,8 +963,41 @@ module core_top (
         .pocket_debug_flags(core_debug_flags)
     );
 
+    // Public JTFRAME keeps the bidirectional SDRAM bus tri-stated in simulated
+    // builds and exposes write data on the board SDRAM helper's `din` port.
+    // Drive the generated pin model from that sideband only while SDRAM write
+    // data is on the bus, so read data can still return through SDRAM_DQ.
+    assign sdram_dq = apfsim_sdram_write_drive ? u_core.u_board.u_sdram.din : 16'hZZZZ;
+
+    function automatic [3:0] apfsim_sdram_decode_burst_beats;
+        input [2:0] mode_bits;
+        begin
+            case (mode_bits)
+                3'b000: apfsim_sdram_decode_burst_beats = 4'd1;
+                3'b001: apfsim_sdram_decode_burst_beats = 4'd2;
+                3'b010: apfsim_sdram_decode_burst_beats = 4'd4;
+                3'b011: apfsim_sdram_decode_burst_beats = 4'd8;
+                default: apfsim_sdram_decode_burst_beats = 4'd8;
+            endcase
+        end
+    endfunction
+
+    always @(posedge sdram_clk) begin
+        if (apfsim_sdram_cmd_mode) begin
+            apfsim_sdram_burst_beats <= apfsim_sdram_decode_burst_beats(sdram_a[2:0]);
+        end
+        if (apfsim_sdram_cmd_write) begin
+            apfsim_sdram_write_remaining <= (apfsim_sdram_burst_beats > 4'd1) ?
+                                            (apfsim_sdram_burst_beats - 4'd1) : 4'd0;
+        end else if (apfsim_sdram_stop_write) begin
+            apfsim_sdram_write_remaining <= 4'd0;
+        end else if (apfsim_sdram_write_remaining != 4'd0) begin
+            apfsim_sdram_write_remaining <= apfsim_sdram_write_remaining - 4'd1;
+        end
+    end
+
     assign apfsim_rom_preload_clk = u_core.clk_sys;
-    assign apfsim_rom_preload_we = u_core.prog_we;
+    assign apfsim_rom_preload_we = u_core.prog_we && u_core.prog_ack;
     assign apfsim_rom_preload_prog_addr = 24'(u_core.prog_addr);
     assign apfsim_rom_preload_addr = {u_core.prog_ba, apfsim_rom_preload_prog_addr[21:0]};
     assign apfsim_rom_preload_data = u_core.prog_data;

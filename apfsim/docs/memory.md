@@ -121,7 +121,7 @@ It is not a Pocket-accurate SDRAM timing model. A pass with this model should be
 
 `rtl_shims/external_memory_models.sv` also provides `apfsim_sdram_pin_model`, a public SDRAM pin-bus model for generated wrappers that preserve SDRAM pins. It models basic ACTIVE/READ/WRITE/PRECHARGE/REFRESH command flow, bank/row selection, DQM byte masking, CAS-latency read return, and bus-contention/error counters. It can also accept a ROM preload/coverage sideband from a generated wrapper. This is stronger than a compile stub because it observes real pin-level traffic, but it is still a bring-up model, not a cycle-accurate Pocket SDRAM timing replacement.
 
-Generated JTFRAME logical wrappers instantiate this model when public Pocket exports expose SDRAM pins. They feed JTFRAME's internal `prog_we`/`prog_addr`/`prog_data`/`prog_mask`/`prog_ba` programming sideband into the model as expected ROM coverage and record:
+Generated JTFRAME logical wrappers instantiate this model when public Pocket exports expose SDRAM pins. Public JTFRAME keeps the bidirectional SDRAM bus tri-stated in Verilator builds and exposes write data on the board SDRAM helper's `din` signal, so the generated wrapper drives the pin model from that sideband during SDRAM write bursts and leaves the bus tri-stated for readback. The wrapper also feeds accepted JTFRAME programming writes (`prog_we && prog_ack` plus `prog_addr`/`prog_data`/`prog_mask`/`prog_ba`) into the model as expected ROM coverage and records:
 
 ```json
 {
@@ -142,7 +142,7 @@ Generated JTFRAME logical wrappers instantiate this model when public Pocket exp
 
 After a run, `memory_activity.json.observed` should be `true` if the wrapper exposes the standard SDRAM counters and the C++ harness was built with SDRAM counter capture. With ROM coverage enabled:
 
-- `sdram_rom_preload_count` counts expected ROM words seen on the programming sideband.
+- `sdram_rom_preload_count` counts expected ROM words accepted by the JTFRAME programming sideband.
 - `sdram_rom_coverage_gap_count` counts reads outside the ROM-backed coverage map. This is useful for identifying partial or wrong ROM payloads without treating every dummy smoke file as physical SDRAM corruption.
 - `sdram_rom_unwritten_read_count` is a hard error: the core read a ROM-backed address before the physical SDRAM write path made that word valid.
 - `sdram_rom_mismatch_count` is a hard error: physical SDRAM data differed from the expected ROM-backed word at a read address.

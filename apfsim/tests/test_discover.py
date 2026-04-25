@@ -442,7 +442,10 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert "apfsim_sdram_read_count" in wrapper_text
     assert "apfsim_sdram_rom_preload_count" in wrapper_text
     assert "apfsim_sdram_first_rom_mismatch_expected" in wrapper_text
+    assert "u_core.u_board.u_sdram.din" in wrapper_text
+    assert "apfsim_sdram_write_drive" in wrapper_text
     assert "u_core.prog_we" in wrapper_text
+    assert "u_core.prog_we && u_core.prog_ack" in wrapper_text
     assert "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv" in filelist
     assert "rtl_shims/external_memory_models.sv" in filelist
     assert "{root}/src/fpga/core/pocket_top.sv" not in filelist
