@@ -159,6 +159,29 @@ def _severity_counts(items: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _diagnostic_priority(item: dict[str, Any], index: int) -> tuple[int, int, int]:
+    severity_rank = {"error": 0, "warning": 1, "info": 2}.get(str(item.get("severity")), 2)
+    code = str(item.get("code") or "")
+    phase = str(item.get("phase") or "")
+    if code.startswith("DATA_SLOT") or code.startswith("INSTANCE_JSON"):
+        domain_rank = 0
+    elif code.startswith("MEMORY_ROM") or code == "MEMORY_UNINITIALIZED_READ":
+        domain_rank = 1
+    elif phase == "bridge" or code.startswith("BRIDGE"):
+        domain_rank = 2
+    elif phase == "reset" or code.startswith("RESET") or code == "READY_TO_RUN_MISSING":
+        domain_rank = 3
+    elif code == "BOOT_TIMEOUT":
+        domain_rank = 9
+    elif phase == "video" or code.startswith("VIDEO"):
+        domain_rank = 4
+    elif phase == "audio" or code.startswith("AUDIO"):
+        domain_rank = 5
+    else:
+        domain_rank = 6
+    return (severity_rank, domain_rank, index)
+
+
 def _diag(
     items: list[dict[str, Any]],
     *,
@@ -1489,6 +1512,12 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
 
 
 def _diagnostic_doc(artifact_root: Path, result: dict[str, Any], items: list[dict[str, Any]]) -> dict[str, Any]:
+    items = [
+        item for _, item in sorted(
+            enumerate(items),
+            key=lambda indexed: _diagnostic_priority(indexed[1], indexed[0]),
+        )
+    ]
     summary = _severity_counts(items)
     result_ok = _as_bool(result.get("ok"), True)
     status = "fail" if summary["errors"] or not result_ok else "pass"
