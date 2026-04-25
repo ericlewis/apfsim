@@ -22,6 +22,7 @@ from memory_attribution import build_rom_validation
 from package_validator import write_package_check
 from profile_generator import generate_profile_candidate
 from run_summary import write_summary
+from source_intake import build_source_contract, write_source_contract
 from wrapper_synthesizer import synthesize_wrapper_profile
 
 APFSIM_DIR = Path(__file__).resolve().parents[1]
@@ -974,6 +975,7 @@ def cmd_bringup(args: argparse.Namespace) -> int:
             )
         except FileExistsError as exc:
             raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+        attach_source_contract(synthesis, root, name=args.name, source_top=args.source_top)
         profile_path = Path(synthesis["paths"]["profile"])
         raw = load_json(profile_path)
         raw["root"] = str(root)
@@ -1979,6 +1981,7 @@ def cmd_synth_wrapper(args: argparse.Namespace) -> int:
         )
     except FileExistsError as exc:
         raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+    attach_source_contract(synthesis, root, name=args.name, source_top=args.top)
     if args.json:
         print(json.dumps(synthesis, indent=2, sort_keys=True))
     else:
@@ -1989,6 +1992,47 @@ def cmd_synth_wrapper(args: argparse.Namespace) -> int:
             print("blockers:")
             for item in synthesis["blockers"]:
                 print(f"  - {item['code']}: {item['message']}")
+    return 0
+
+
+def attach_source_contract(synthesis: dict[str, Any], root: Path, *, name: str | None, source_top: str | None) -> None:
+    profile_path = Path(str(synthesis["paths"]["profile"]))
+    output_dir = profile_path.parent
+    contract = build_source_contract(root, output_dir=output_dir, profile_name=name, source_top=source_top)
+    json_path, md_path = write_source_contract(contract, output_dir)
+    synthesis["paths"]["source_contract"] = str(json_path)
+    synthesis["paths"]["source_contract_markdown"] = str(md_path)
+    report_path = output_dir / "wrapper_synthesis.json"
+    if report_path.exists():
+        report = load_json(report_path)
+        report.setdefault("paths", {}).update({
+            "source_contract": str(json_path),
+            "source_contract_markdown": str(md_path),
+        })
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+
+
+def cmd_intake(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.output)
+    contract = build_source_contract(root, output_dir=output, profile_name=args.name, source_top=args.top)
+    json_path, md_path = write_source_contract(contract, output)
+    contract["paths"] = {
+        "contract": str(json_path),
+        "markdown": str(md_path),
+    }
+    if args.json:
+        print(json.dumps(contract, indent=2, sort_keys=True))
+    else:
+        classification = contract["classification"]
+        print(f"intake: {classification['mode']} status={classification['status']} confidence={classification['confidence']}")
+        print(f"top: {contract['top']['selected'] or '-'}")
+        print(f"contract: {json_path}")
+        print(f"markdown: {md_path}")
+        if contract.get("blockers"):
+            print("blockers:")
+            for item in contract["blockers"]:
+                print(f"  - {item['severity']} {item['code']}: {item['message']}")
     return 0
 
 
@@ -2097,6 +2141,14 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--root", action="append", help="root to scan; repeatable. If omitted, APFSIM_DISCOVERY_ROOTS is split on the OS path separator")
     discover.add_argument("--output", default="output/core-inventory", help="directory for cores.json and cores.md")
     discover.set_defaults(func=cmd_discover)
+
+    intake = sub.add_parser("intake", help="build a source contract for one core checkout before profile/wrapper generation")
+    intake.add_argument("--root", required=True, help="Pocket/core checkout root")
+    intake.add_argument("--top", help="source module to classify; defaults to QSF top or best-scored module")
+    intake.add_argument("--name", help="contract/profile name; defaults to normalized checkout name")
+    intake.add_argument("--output", "--out", default="output/intake", help="directory for source_contract.json and source_contract.md")
+    intake.add_argument("--json", action="store_true", help="emit machine-readable source contract")
+    intake.set_defaults(func=cmd_intake)
 
     gen_profile = sub.add_parser("generate-profile", help="generate a reviewable profile/filelist/scenario candidate for a core checkout")
     gen_profile.add_argument("--root", required=True, help="Pocket core checkout root")

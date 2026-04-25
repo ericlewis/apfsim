@@ -9,11 +9,12 @@ This document is for agents wiring `apfsim` into a generator or corpus runner. P
 Use this loop:
 
 1. `discover` or provide a manifest row.
-2. `generate-profile` or `bringup --auto-profile`.
-3. Run sim until a contract gate or selected stop stage.
-4. Read stable artifacts.
-5. Emit diagnostics and repair plan.
-6. Reduce generator bugs into tests before continuing the corpus.
+2. `intake` one core to classify source topology, APF port candidates, memory dependencies, and pre-Verilator blockers.
+3. `generate-profile`, `synth-wrapper`, `bringup --auto-profile`, or `bringup --synth-wrapper` depending on intake classification.
+4. Run sim until a contract gate or selected stop stage.
+5. Read stable artifacts.
+6. Emit diagnostics and repair plan.
+7. Reduce generator bugs into tests before continuing the corpus.
 
 Do not silently patch source trees. Use reviewable patches and rerun.
 
@@ -36,6 +37,25 @@ bin/apfsim bringup \
   --root /path/to/openFPGA-Core \
   --auto-profile \
   --rom /path/to/game.rom \
+  --out output/bringup/core-name \
+  --repair
+```
+
+Source intake:
+
+```sh
+bin/apfsim intake \
+  --root /path/to/openFPGA-Core \
+  --output output/intake/core-name \
+  --json
+```
+
+Generated APF wrapper candidate:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --synth-wrapper \
   --out output/bringup/core-name \
   --repair
 ```
@@ -105,6 +125,7 @@ Read these first:
 - `bringup-report.md`: human report for handoff.
 - `video_shape.json`: APF-facing runtime video contract.
 - `bridge_summary.json`: bridge counters and command transcript.
+- `source_contract.json`: source topology, selected top, port candidates, memory dependencies, package metadata, and pre-Verilator blockers.
 - `source_provenance.json`: sim-only shims/generated files/provenance.
 - `memory_activity.json`: memory model provenance and live counter status when wrapper probes are connected.
 - `package_check.json`: APF metadata and SD-card path validation.
@@ -125,6 +146,7 @@ Read these first:
 | Audio changed after input/start | Distinguish silent attract from post-input gameplay audio. | `result.input_audio_response`, `result.input_audio_effect_seen`, `result.audio_activity.input_response`, `result.audio.active_after_input`, `summary.row.audio_active_after_input`, `summary.row.audio_nonzero_samples_after_input` |
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `has_address`, `file_exists`, `load_status`, `load_error`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
+| Source intake classification | Decide direct-mode/shell-mode/family-specific/architecture-block before Verilator. | `source_contract.classification.mode`, `source_contract.top.selected`, `source_contract.blockers[]`, `source_contract.recommendations[]` |
 | Shim/source provenance | Make sim-only VHDL, primitive shims, and memory model libraries visible in pass results. | `source_provenance.shimmed_modules[]`, `kind`, `confidence`, `modules`, `memory_classes`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
 | Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `profile.memory.rom_regions[]`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `source_provenance.wrapper_generation`, `memory_activity.json`, `memory_activity.rom_regions[]`, `memory_activity.rom_validation`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks`, `summary.row.memory_activity_observed`, `summary.row.memory_error_codes`, `summary.row.memory_rom_error_file`, `summary.row.memory_rom_error_source_offset` |
 

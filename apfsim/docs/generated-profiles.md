@@ -1,5 +1,36 @@
 # Generated Profile Candidates
 
+## Source Intake
+
+`apfsim intake` creates the pre-profile source contract for a single checkout:
+
+```sh
+bin/apfsim intake \
+  --root /path/to/openFPGA-Core \
+  --output output/intake/core-name \
+  --json
+```
+
+It writes:
+
+- `<output>/source_contract.json`: stable schema `apfsim.source_contract.v1`.
+- `<output>/source_contract.md`: concise human report.
+
+The contract is designed for generators and agents. It records:
+
+- `classification.mode`: `direct-mode`, `shell-mode`, `family-specific`, or `architecture-block`.
+- `top`: selected source top, QSF top, explicit top override, and ranked module candidates.
+- `ports`: APF-facing ports present/missing, source port inventory, inferred wrapper mappings, and wrapper blockers.
+- `sources`: QSF/QIP-expanded source files, skipped sources, missing sources, VHDL files, and HDL counts.
+- `metadata`: package JSON paths, core IDs, video modes, data slots, assets, and slot flags.
+- `memory`: SDRAM/SRAM/PSRAM/CRAM/BRAM/FIFO/ROM dependency intelligence.
+- `blockers[]`: stable preflight codes such as `BRIDGE_MAPPING_MISSING`, `VHDL_ENTITY_PRESENT`, `MEMORY_MODEL_REQUIRED`, and `SOURCE_FILE_MISSING`.
+- `recommendations[]`: next action hints such as `synth-wrapper`, `memory-model`, `vhdl-strategy`, or `bridge-adapter`.
+
+Use this before broad corpus runs. It prevents wasting Verilator cycles on ports that are actually blocked by unsupported VHDL, external RAM models, missing QSF sources, or a non-APF source top.
+
+## Profile Candidates
+
 `apfsim generate-profile` creates a reviewable starting point for a new runtime profile. It does not modify `profiles/` by default.
 
 ```sh
@@ -99,6 +130,7 @@ It emits:
 - `<output>/<name>/apfsim_core_top.sv`: reviewable APF wrapper.
 - `<output>/<name>/filelist.f`: source filelist with the wrapper last.
 - `<output>/<name>/scenario.yml`: smoke scenario from APF metadata.
+- `<output>/<name>/source_contract.json`: intake classification and source/port/memory blockers.
 - `<output>/<name>/wrapper_synthesis.json`: machine-readable mapping report.
 - `<output>/<name>/NOTES.md`: human review summary.
 

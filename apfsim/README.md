@@ -272,6 +272,19 @@ bin/apfsim discover \
 
 Discovery reports package metadata, `core_top` candidates, HDL language mix, likely Verilator blockers, missing shims, and git cleanliness. See [Generated Profile Candidates](docs/generated-profiles.md).
 
+### Intake One Core
+
+Use intake before profile generation when you want a machine-readable source contract for one checkout:
+
+```sh
+bin/apfsim intake \
+  --root /path/to/openFPGA-Core \
+  --output output/intake/core-name \
+  --json
+```
+
+This writes `source_contract.json` and `source_contract.md`. The contract classifies the port as `direct-mode`, `shell-mode`, `family-specific`, or `architecture-block`, records the selected top, QSF/source inventory, APF port candidates, memory dependencies, package metadata, and blockers such as missing bridge/video mappings, VHDL entities, or external RAM model requirements.
+
 ### Generate A Profile Candidate
 
 ```sh
@@ -294,7 +307,7 @@ bin/apfsim synth-wrapper \
   --json
 ```
 
-This emits a reviewable `core_top` wrapper, profile, filelist, scenario, `NOTES.md`, and `wrapper_synthesis.json`. The report records inferred APF mappings, confidence, and blockers such as missing bridge, video, audio, or memory mappings. It is a starting hypothesis, not a silent source patch.
+This emits a reviewable `core_top` wrapper, profile, filelist, scenario, `NOTES.md`, `source_contract.json`, and `wrapper_synthesis.json`. The reports record source classification, inferred APF mappings, confidence, and blockers such as missing bridge, video, audio, or memory mappings. It is a starting hypothesis, not a silent source patch.
 
 `bringup` can use the same path directly:
 

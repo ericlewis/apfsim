@@ -224,6 +224,7 @@ def test_public_schema_files_are_valid_json():
         "result.schema.json",
         "run_summary.schema.json",
         "shim_catalog.schema.json",
+        "source_contract.schema.json",
         "source_provenance.schema.json",
         "video_apply.schema.json",
         "video_activity.schema.json",
