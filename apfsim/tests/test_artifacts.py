@@ -229,6 +229,7 @@ def test_public_schema_files_are_valid_json():
         "video_activity.schema.json",
         "video_compare.schema.json",
         "video_shape.schema.json",
+        "wrapper_synthesis.schema.json",
     }
     found = {path.name for path in schema_dir.glob("*.schema.json")}
     assert expected <= found

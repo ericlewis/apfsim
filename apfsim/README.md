@@ -283,6 +283,29 @@ bin/apfsim generate-profile \
 
 Generated profiles are review artifacts, not trusted production gates. Review the generated filelist, scenario, notes, shim substitutions, and expected artifacts before copying anything into `profiles/`.
 
+### Synthesize An APF Wrapper
+
+Use `synth-wrapper` when a checkout has a useful source top but not a Verilator-ready APF `core_top` contract:
+
+```sh
+bin/apfsim synth-wrapper \
+  --root /path/to/openFPGA-Core \
+  --output output/synth-wrapper \
+  --json
+```
+
+This emits a reviewable `core_top` wrapper, profile, filelist, scenario, `NOTES.md`, and `wrapper_synthesis.json`. The report records inferred APF mappings, confidence, and blockers such as missing bridge, video, audio, or memory mappings. It is a starting hypothesis, not a silent source patch.
+
+`bringup` can use the same path directly:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --synth-wrapper \
+  --out output/bringup/core \
+  --explain
+```
+
 ### Compare Simulated Video Shape With `video.json`
 
 Every successful run writes `video_shape.json` and `result.json.video_shape`. This is the stable runtime video contract for tools such as core generators.

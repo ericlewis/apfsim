@@ -22,6 +22,7 @@ from memory_attribution import build_rom_validation
 from package_validator import write_package_check
 from profile_generator import generate_profile_candidate
 from run_summary import write_summary
+from wrapper_synthesizer import synthesize_wrapper_profile
 
 APFSIM_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = APFSIM_DIR / "profiles"
@@ -952,14 +953,45 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
 
 
 def cmd_bringup(args: argparse.Namespace) -> int:
-    if not args.profile and not (args.root and args.auto_profile):
-        raise ApfSimError("bringup requires --profile or --root with --auto-profile", phase="bringup")
+    if not args.profile and not (args.root and (args.auto_profile or args.synth_wrapper)):
+        raise ApfSimError("bringup requires --profile or --root with --auto-profile/--synth-wrapper", phase="bringup")
 
     out = resolve_user_path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     profile: Profile
     generated_payload: dict[str, Any] | None = None
-    if args.root and args.auto_profile:
+    if args.root and args.synth_wrapper:
+        root = resolve_user_path(args.root)
+        generated_dir = out / "synth-wrapper"
+        try:
+            synthesis = synthesize_wrapper_profile(
+                root,
+                generated_dir,
+                apfsim_dir=APFSIM_DIR,
+                profile_name=args.name,
+                source_top=args.source_top,
+                force=True,
+            )
+        except FileExistsError as exc:
+            raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+        profile_path = Path(synthesis["paths"]["profile"])
+        raw = load_json(profile_path)
+        raw["root"] = str(root)
+        name = str(raw.get("name") or profile_path.stem)
+        raw = expand_profile_shim_catalog(raw, name)
+        profile = Profile(name=name, path=profile_path, raw=raw, root=root)
+        generated_payload = {
+            "schema": "apfsim.bringup_profile.v1",
+            "profile": name,
+            "root": str(root),
+            "kind": "synth-wrapper",
+            "paths": synthesis["paths"],
+            "warnings": synthesis.get("warnings", []),
+            "blockers": synthesis.get("blockers", []),
+            "confidence": synthesis.get("confidence", 0),
+        }
+        (out / "profile.generated.json").write_text(json.dumps(generated_payload, indent=2) + "\n")
+    elif args.root and args.auto_profile:
         root = resolve_user_path(args.root)
         generated_dir = out / "generated-profile"
         generated = generate_profile_candidate(
@@ -1933,6 +1965,33 @@ def cmd_generate_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_synth_wrapper(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.output)
+    try:
+        synthesis = synthesize_wrapper_profile(
+            root,
+            output,
+            apfsim_dir=APFSIM_DIR,
+            profile_name=args.name,
+            source_top=args.top,
+            force=args.force,
+        )
+    except FileExistsError as exc:
+        raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+    if args.json:
+        print(json.dumps(synthesis, indent=2, sort_keys=True))
+    else:
+        print(f"wrapper synthesis: {synthesis['status']} confidence={synthesis['confidence']}")
+        print(f"profile: {synthesis['paths']['profile']}")
+        print(f"wrapper: {synthesis['paths']['wrapper']}")
+        if synthesis.get("blockers"):
+            print("blockers:")
+            for item in synthesis["blockers"]:
+                print(f"  - {item['code']}: {item['message']}")
+    return 0
+
+
 def cmd_shim_catalog(args: argparse.Namespace) -> int:
     catalog_path = resolve_user_path(args.catalog) if args.catalog else DEFAULT_SHIM_CATALOG
     if args.profile:
@@ -2009,6 +2068,8 @@ def build_parser() -> argparse.ArgumentParser:
     bringup.add_argument("--profile", help="existing apfsim profile name or path")
     bringup.add_argument("--root", help="Pocket core checkout/package root; binds {root} for --profile or generates a profile with --auto-profile")
     bringup.add_argument("--auto-profile", action="store_true", help="generate a reviewable profile candidate before running")
+    bringup.add_argument("--synth-wrapper", action="store_true", help="synthesize a reviewable APF wrapper/profile before running")
+    bringup.add_argument("--source-top", help="source module to instantiate when using --synth-wrapper")
     bringup.add_argument("--name", help="generated profile name when using --auto-profile")
     bringup.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")
     bringup.add_argument("--rom", help="ROM/asset file to bind to --rom-slot-id")
@@ -2045,6 +2106,15 @@ def build_parser() -> argparse.ArgumentParser:
     gen_profile.add_argument("--force", action="store_true", help="overwrite an existing generated bundle")
     gen_profile.add_argument("--json", action="store_true", help="emit machine-readable generation report")
     gen_profile.set_defaults(func=cmd_generate_profile)
+
+    synth = sub.add_parser("synth-wrapper", help="synthesize a reviewable APF core_top wrapper/profile for a source top")
+    synth.add_argument("--root", required=True, help="Pocket/core checkout root")
+    synth.add_argument("--top", help="source module to instantiate; defaults to QSF top or best-scored module")
+    synth.add_argument("--name", help="profile name; defaults to normalized checkout name")
+    synth.add_argument("--output", default="output/synth-wrapper", help="directory for synthesized wrapper/profile bundles")
+    synth.add_argument("--force", action="store_true", help="overwrite an existing synthesized bundle")
+    synth.add_argument("--json", action="store_true", help="emit machine-readable wrapper synthesis report")
+    synth.set_defaults(func=cmd_synth_wrapper)
 
     shim_catalog = sub.add_parser("shim-catalog", help="list shim/substitution catalog entries or show profile expansion")
     shim_catalog.add_argument("--catalog", help="catalog JSON path; defaults to catalogs/shims.json")

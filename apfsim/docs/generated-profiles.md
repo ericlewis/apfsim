@@ -81,3 +81,41 @@ bin/apfsim bringup \
 `expected_artifacts` is checked immediately after the simulator run and before bring-up postprocessing. List runtime artifacts only, such as `result.json`, `video_shape.json`, `lifecycle.json`, `bridge.log`, frame JSON/PPM files, audio files, and save dumps. Do not list postprocess artifacts such as `diagnostics.json`, `bringup-report.md`, `repair-plan.json`, `summary.json`, `summary.tsv`, or `package_check.json`; those are produced by `bringup` after runtime artifact validation.
 
 Only copy the candidate into `profiles/` after it builds, boots, and produces artifacts worth keeping as a regression profile.
+
+## Synthesized APF Wrappers
+
+`apfsim synth-wrapper` is a stronger but riskier profile-generation path for cores that expose a useful HDL top but not the APF-facing `core_top` contract expected by the simulator:
+
+```sh
+bin/apfsim synth-wrapper \
+  --root /path/to/openFPGA-Core \
+  --output output/synth-wrapper \
+  --json
+```
+
+It emits:
+
+- `<output>/<name>/<name>.json`: profile using generated `core_top`.
+- `<output>/<name>/apfsim_core_top.sv`: reviewable APF wrapper.
+- `<output>/<name>/filelist.f`: source filelist with the wrapper last.
+- `<output>/<name>/scenario.yml`: smoke scenario from APF metadata.
+- `<output>/<name>/wrapper_synthesis.json`: machine-readable mapping report.
+- `<output>/<name>/NOTES.md`: human review summary.
+
+The stable report schema is `apfsim.wrapper_synthesis.v1`. Consumers should check:
+
+- `status`: `ready`, `partial`, or `blocked`.
+- `confidence`: aggregate mapping confidence from 0 to 1.
+- `mappings[]`: APF signal, source port/expression, confidence, and risk.
+- `blockers[]`: missing bridge/video/audio/memory mappings that must be handled before trusting simulator failures.
+
+This mode intentionally emits low-confidence mappings instead of hiding uncertainty. For example, a source top with `HBLANK`/`VBLANK` but no `video_de` will produce a wrapper expression like `~HBLANK & ~VBLANK` and mark the mapping as inferred. Treat that as a review item and let `video_shape`/diagnostics prove or reject it.
+
+`bringup --synth-wrapper` runs this path before simulation:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --synth-wrapper \
+  --out output/bringup/core
+```
