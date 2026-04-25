@@ -855,6 +855,16 @@ module core_top (
 `else
     localparam integer COLORW = 4;
 `endif
+`ifdef JTFRAME_WIDTH
+    localparam [15:0] VIDEO_WIDTH = `JTFRAME_WIDTH;
+`else
+    localparam [15:0] VIDEO_WIDTH = 16'd320;
+`endif
+`ifdef JTFRAME_HEIGHT
+    localparam [15:0] VIDEO_HEIGHT = `JTFRAME_HEIGHT;
+`else
+    localparam [15:0] VIDEO_HEIGHT = 16'd240;
+`endif
 
     // JTFRAME's public bridge adapter swaps command/data words internally only
     // when this is asserted. apfsim drives command words in APF register order,
@@ -912,7 +922,11 @@ module core_top (
     wire [23:0]       core_debug_rgb;
     wire [7:0]        core_debug_flags;
 
-    jtframe_pocket #(.COLORW(COLORW)) u_core (
+    jtframe_pocket #(
+        .COLORW(COLORW),
+        .VIDEO_WIDTH(VIDEO_WIDTH),
+        .VIDEO_HEIGHT(VIDEO_HEIGHT)
+    ) u_core (
         .clk_74a(clk_74a),
         .clk_74b(clk_74b),
         .reset_n(1'b1),
@@ -1070,6 +1084,13 @@ module core_top (
     wire [23:0] video_rgb_raw = {expand8(core_r_ext), expand8(core_g_ext), expand8(core_b_ext)};
     reg hs_prev = 1'b0;
     reg vs_prev = 1'b0;
+    reg lhbl_crop_prev = 1'b0;
+    reg [15:0] video_crop_x = 16'd0;
+    reg [15:0] video_crop_y = 16'd0;
+    wire core_de_raw = core_lhbl & core_lvbl;
+    wire core_de_cropped = core_de_raw &&
+                           video_crop_x < VIDEO_WIDTH &&
+                           video_crop_y < VIDEO_HEIGHT;
 
     always @(posedge core_video_clk) begin
         // JTFRAME advances the visible stream on video_pxl_cen while the
@@ -1079,12 +1100,28 @@ module core_top (
         video_rgb_clock <= core_pxl_cen;
         video_rgb_clock_90 <= core_pxl_cen;
         if (core_pxl_cen) begin
-            video_de <= core_lhbl & core_lvbl;
-            video_rgb <= (core_lhbl & core_lvbl) ? video_rgb_raw : 24'h0;
+            video_de <= core_de_cropped;
+            video_rgb <= core_de_cropped ? video_rgb_raw : 24'h0;
             video_hs <= ~hs_prev & core_hs;
             video_vs <= ~vs_prev & core_vs;
             hs_prev <= core_hs;
             vs_prev <= core_vs;
+
+            if (!core_lvbl) begin
+                video_crop_x <= 16'd0;
+                video_crop_y <= 16'd0;
+            end else begin
+                if (core_lhbl) begin
+                    video_crop_x <= video_crop_x + 16'd1;
+                end else begin
+                    video_crop_x <= 16'd0;
+                end
+
+                if (lhbl_crop_prev && !core_lhbl) begin
+                    video_crop_y <= video_crop_y + 16'd1;
+                end
+            end
+            lhbl_crop_prev <= core_lhbl;
         end
     end
 

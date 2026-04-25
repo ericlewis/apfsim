@@ -438,6 +438,8 @@ def test_generate_profile_wraps_jtframe_pocket_logical_top(tmp_path):
     assert profile["memory_activity"]["top_port_classes"] == ["sdram"]
     assert wrapper.exists()
     assert "video_rgb_clock <= core_pxl_cen" in wrapper_text
+    assert "VIDEO_WIDTH = `JTFRAME_WIDTH" in wrapper_text
+    assert "core_de_cropped" in wrapper_text
     assert "apfsim_sdram_pin_model" in wrapper_text
     assert "apfsim_sdram_read_count" in wrapper_text
     assert "apfsim_sdram_rom_preload_count" in wrapper_text
