@@ -14,7 +14,7 @@ A profile run writes a stable artifact directory. Important files:
 - `summary.json.row.shim_kinds` and `summary.json.row.shim_confidences`: compact `name:value` lists for separating compile shims, behavioral models, and bring-up-only models in corpus output.
 - `source_provenance.json.memory_dependencies`: detected memory classes, evidence, model confidence, and risks.
 - `source_provenance.json.wrapper_generation`: generated wrapper scaffolds such as external RAM helper modules.
-- `memory_activity.json`: memory model provenance and, once wrappers wire counters, external RAM activity/error counters.
+- `memory_activity.json`: memory model provenance, external RAM activity/error counters, and `rom_validation` source attribution for ROM-backed SDRAM mismatch/uninitialized-read/coverage-gap events.
 - `package_check.json`: package metadata and SD-card path validation, schema `apfsim.package_check.v1`.
 - `summary.json`: normalized per-run row for corpus and generator consumption, schema `apfsim.run_summary.v1`.
 - `summary.tsv`: one-row tab-separated form of `summary.json.row`.

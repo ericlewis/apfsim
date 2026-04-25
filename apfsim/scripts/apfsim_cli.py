@@ -18,6 +18,7 @@ from corpus_runner import run_corpus_manifest
 from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
 from diagnostics import write_diagnostics
 from log_analyzer import analyze_logs, write_json_report
+from memory_attribution import build_rom_validation
 from package_validator import write_package_check
 from profile_generator import generate_profile_candidate
 from run_summary import write_summary
@@ -794,6 +795,7 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
     wrapper_generation = provenance.get("wrapper_generation") if isinstance(provenance.get("wrapper_generation"), dict) else {}
     memory_wrapper = wrapper_generation.get("memory_models") if isinstance(wrapper_generation.get("memory_models"), dict) else {}
     result_memory: dict[str, Any] = {}
+    result: dict[str, Any] = {}
     result_path = artifact_root / "result.json"
     if result_path.exists():
         try:
@@ -801,6 +803,7 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
             if isinstance(result.get("memory_activity"), dict):
                 result_memory = result["memory_activity"]
         except Exception:
+            result = {}
             result_memory = {}
     shimmed = [item for item in provenance.get("shimmed_modules", []) if isinstance(item, dict)]
     memory_shims = [
@@ -844,6 +847,18 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
         item for item in result_memory.get("counters", [])
         if isinstance(item, dict) and str(item.get("name", ""))
     ]
+    rom_validation = build_rom_validation({"counters": runtime_counters}, result)
+    enriched_runtime_errors = []
+    for error in runtime_errors:
+        enriched = dict(error)
+        for event in rom_validation["events"]:
+            if event.get("code") == enriched.get("code") and (
+                not enriched.get("counter") or event.get("counter") == enriched.get("counter")
+            ):
+                enriched["first_event"] = event
+                enriched["source"] = event.get("source", {})
+                break
+        enriched_runtime_errors.append(enriched)
     doc = {
         "schema": "apfsim.memory_activity.v1",
         "profile": profile.name,
@@ -856,7 +871,8 @@ def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dic
         "declared_counters": declared_counters,
         "counter_status": "observed" if observed else ("declared_not_observed" if declared_counters else "none"),
         "counters": runtime_counters if observed else [],
-        "errors": errors + runtime_errors,
+        "rom_validation": rom_validation,
+        "errors": errors + enriched_runtime_errors,
         "notes": [
             "Memory activity was observed through standard apfsim top-level counter ports." if observed else
             "Memory activity is a provenance artifact unless the generated wrapper wires public counter probes.",

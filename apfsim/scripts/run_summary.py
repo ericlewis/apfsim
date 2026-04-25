@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from memory_attribution import build_rom_validation
+
 SCHEMA = "apfsim.run_summary.v1"
 TSV_COLUMNS = [
     "ok",
@@ -51,6 +53,12 @@ TSV_COLUMNS = [
     "memory_counter_names",
     "memory_error_counter_names",
     "memory_error_codes",
+    "memory_rom_error_code",
+    "memory_rom_error_slot_id",
+    "memory_rom_error_file",
+    "memory_rom_error_source_offset",
+    "memory_rom_error_address",
+    "memory_rom_error_byte_lanes",
     "artifact_dir",
 ]
 
@@ -155,6 +163,10 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         for item in _list(memory_activity.get("errors"))
         if isinstance(item, dict) and item.get("code")
     ]
+    rom_validation = _obj(memory_activity.get("rom_validation")) or build_rom_validation(memory_activity, result)
+    first_rom_error = _obj(rom_validation.get("first_error"))
+    first_rom_source = _obj(first_rom_error.get("source"))
+    first_rom_lanes = _obj(first_rom_error.get("byte_lanes"))
     memory_counters = [
         item for item in _list(memory_activity.get("counters"))
         if isinstance(item, dict) and item.get("name")
@@ -235,6 +247,12 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
         "memory_counter_names": memory_counter_names,
         "memory_error_counter_names": memory_error_counter_names,
         "memory_error_codes": memory_error_codes,
+        "memory_rom_error_code": str(first_rom_error.get("code") or ""),
+        "memory_rom_error_slot_id": str(first_rom_source.get("slot_id") or ""),
+        "memory_rom_error_file": str(first_rom_source.get("file") or ""),
+        "memory_rom_error_source_offset": _as_int(first_rom_source.get("source_offset"), 0),
+        "memory_rom_error_address": _as_int(first_rom_error.get("first_addr"), 0),
+        "memory_rom_error_byte_lanes": [str(item) for item in _list(first_rom_lanes.get("names"))],
         "artifact_dir": str(artifact_dir),
     }
     return {
@@ -288,6 +306,7 @@ def summarize_run(artifact_dir: Path, *, package_check_path: Path | None = None)
             "memory_dependencies": memory_doc,
             "memory_models": memory_models_doc,
             "memory_activity": memory_activity,
+            "memory_rom_validation": rom_validation,
         },
     }
 

@@ -134,6 +134,20 @@ def make_artifacts(root: Path):
         "external_classes": ["sdram"],
         "models": [],
         "counter_status": "observed",
+        "rom_validation": {
+            "schema": "apfsim.memory_rom_validation.v1",
+            "first_error": {
+                "code": "MEMORY_ROM_WRITE_MISMATCH",
+                "first_addr": 4,
+                "byte_lanes": {"names": ["high"]},
+                "source": {
+                    "slot_id": 1,
+                    "file": "game.rom",
+                    "source_offset": 8,
+                },
+            },
+            "events": [],
+        },
         "counters": [
             {"name": "sdram_read_count", "class": "sdram", "value": 10, "error": False},
             {"name": "sdram_overrun_error", "class": "sdram", "value": 1, "error": True},
@@ -177,8 +191,15 @@ def test_summarize_run_flattens_artifacts(tmp_path):
     assert row["memory_counter_names"] == ["sdram_read_count", "sdram_overrun_error"]
     assert row["memory_error_counter_names"] == ["sdram_overrun_error"]
     assert row["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
+    assert row["memory_rom_error_code"] == "MEMORY_ROM_WRITE_MISMATCH"
+    assert row["memory_rom_error_slot_id"] == "1"
+    assert row["memory_rom_error_file"] == "game.rom"
+    assert row["memory_rom_error_source_offset"] == 8
+    assert row["memory_rom_error_address"] == 4
+    assert row["memory_rom_error_byte_lanes"] == ["high"]
     assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
     assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
+    assert doc["source_provenance"]["memory_rom_validation"]["schema"] == "apfsim.memory_rom_validation.v1"
     assert doc["video"]["changed_after_input"] is True
     assert doc["audio"]["active_after_input"] is True
 

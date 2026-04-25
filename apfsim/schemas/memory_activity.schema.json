@@ -40,6 +40,15 @@
         "additionalProperties": true
       }
     },
+    "rom_validation": {
+      "type": "object",
+      "properties": {
+        "schema": { "const": "apfsim.memory_rom_validation.v1" },
+        "events": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "first_error": { "type": ["object", "null"], "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
     "notes": { "type": "array", "items": { "type": "string" } }
   },
   "additionalProperties": true

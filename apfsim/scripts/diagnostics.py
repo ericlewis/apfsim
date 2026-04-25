@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from memory_attribution import build_rom_validation, event_for_code, loaded_slot_candidates
+
 DIAGNOSTICS_SCHEMA = "apfsim.diagnostics.v1"
 DIAGNOSTIC_SCHEMA = "apfsim.diagnostic.v1"
 
@@ -133,19 +135,7 @@ def _data_slots(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _loaded_slot_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates = []
-    for slot in _data_slots(result):
-        loaded = _as_int(slot.get("loaded_bytes"), _as_int(slot.get("loaded_size"), 0))
-        if loaded <= 0:
-            continue
-        candidates.append({
-            "id": slot.get("id"),
-            "name": slot.get("name", ""),
-            "path": slot.get("path", slot.get("file", "")),
-            "loaded_bytes": loaded,
-            "crc": slot.get("crc", slot.get("loaded_crc32")),
-        })
-    return candidates
+    return loaded_slot_candidates(result)
 
 
 def _severity_counts(items: list[dict[str, Any]]) -> dict[str, int]:
@@ -1442,6 +1432,7 @@ def _memory_error_observed(
     observed: Any,
     counters: list[dict[str, Any]],
     result: dict[str, Any],
+    memory_activity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     doc = {
         "counter": counter_name,
@@ -1449,6 +1440,7 @@ def _memory_error_observed(
         "value": value,
         "observed": observed,
     }
+    event = event_for_code(memory_activity or {"counters": counters}, result, code, counter_name)
     if code == "MEMORY_ROM_WRITE_MISMATCH":
         addr = _counter_value(counters, "sdram_first_rom_mismatch_addr")
         dqm = _counter_value(counters, "sdram_first_rom_mismatch_dqm", 3)
@@ -1464,6 +1456,15 @@ def _memory_error_observed(
             },
             "source_slot_candidates": _loaded_slot_candidates(result),
         })
+        if event:
+            doc.update({
+                "first_event": event,
+                "source": event.get("source", {}),
+                "source_offset": _obj(event.get("source")).get("source_offset"),
+                "source_file": _obj(event.get("source")).get("file"),
+                "slot_id": _obj(event.get("source")).get("slot_id"),
+                "byte_lanes": event.get("byte_lanes"),
+            })
     elif code == "MEMORY_UNINITIALIZED_READ":
         addr = _counter_value(counters, "sdram_first_rom_unwritten_read_addr")
         dqm = _counter_value(counters, "sdram_first_rom_unwritten_dqm", 3)
@@ -1478,6 +1479,15 @@ def _memory_error_observed(
             },
             "source_slot_candidates": _loaded_slot_candidates(result),
         })
+        if event:
+            doc.update({
+                "first_event": event,
+                "source": event.get("source", {}),
+                "source_offset": _obj(event.get("source")).get("source_offset"),
+                "source_file": _obj(event.get("source")).get("file"),
+                "slot_id": _obj(event.get("source")).get("slot_id"),
+                "byte_lanes": event.get("byte_lanes"),
+            })
     return doc
 
 
@@ -1485,6 +1495,9 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
     if not memory_activity:
         return
     counters = [item for item in _list(memory_activity.get("counters")) if isinstance(item, dict)]
+    if "rom_validation" not in memory_activity:
+        memory_activity = dict(memory_activity)
+        memory_activity["rom_validation"] = build_rom_validation(memory_activity, result)
     emitted: set[tuple[str, str]] = set()
     for index, error in enumerate(_list(memory_activity.get("errors"))):
         if not isinstance(error, dict):
@@ -1511,6 +1524,7 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
                 error.get("observed", memory_activity.get("observed")),
                 counters,
                 result,
+                memory_activity,
             ),
             expected={"memory_error_counters": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/errors/{index}"}],
@@ -1546,6 +1560,7 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
                 memory_activity.get("observed"),
                 counters,
                 result,
+                memory_activity,
             ),
             expected={"counter_value": 0},
             evidence=[{"artifact": "memory_activity.json", "json_pointer": f"/counters/{index}"}],
@@ -1574,6 +1589,7 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
             ),
             0,
         )
+        event = event_for_code(memory_activity, result, "MEMORY_ROM_COVERAGE_GAP", "sdram_rom_coverage_gap_count")
         _diag(
             items,
             code="MEMORY_ROM_COVERAGE_GAP",
@@ -1586,6 +1602,11 @@ def _diagnose_memory_activity(items: list[dict[str, Any]], memory_activity: dict
                 "value": value,
                 "first_addr": first_addr,
                 "bank": first_addr >> 22,
+                "first_event": event,
+                "source": event.get("source", {}) if event else {},
+                "source_offset": _obj(event.get("source")).get("source_offset") if event else None,
+                "source_file": _obj(event.get("source")).get("file") if event else None,
+                "slot_id": _obj(event.get("source")).get("slot_id") if event else None,
                 "source_slot_candidates": _loaded_slot_candidates(result),
             },
             expected={"coverage_gap_count": 0},

@@ -394,7 +394,20 @@ def test_diagnostics_surface_live_memory_counter_errors(tmp_path):
 
 def test_diagnostics_explain_sdram_rom_write_mismatch(tmp_path):
     artifacts = tmp_path / "run"
-    write_json(artifacts / "result.json", passing_result())
+    result = passing_result()
+    result["data_load"] = {
+        "total_loaded_bytes": 4096,
+        "slots": [{
+            "id": 1,
+            "name": "ROM",
+            "path": "game.rom",
+            "address": "0x10000000",
+            "has_address": True,
+            "loaded_bytes": 4096,
+            "crc": "0x12345678",
+        }],
+    }
+    write_json(artifacts / "result.json", result)
     write_json(artifacts / "memory_activity.json", {
         "schema": "apfsim.memory_activity.v1",
         "observed": True,
@@ -431,8 +444,50 @@ def test_diagnostics_explain_sdram_rom_write_mismatch(tmp_path):
     assert item["observed"]["expected_word"] == 43690
     assert item["observed"]["actual_word"] == 21845
     assert item["observed"]["byte_lanes_checked"] == {"low": True, "high": False}
+    assert item["observed"]["source"]["matched"] is False
     assert "external SDRAM write path corrupted ROM-backed bytes" in item["likely_causes"]
     assert "bank/address packing" in item["repairs"][0]["description"]
+
+
+def test_diagnostics_attribute_sdram_rom_mismatch_to_source_slot(tmp_path):
+    artifacts = tmp_path / "run"
+    result = passing_result()
+    result["data_load"] = {
+        "total_loaded_bytes": 4096,
+        "slots": [{
+            "id": 1,
+            "name": "ROM",
+            "path": "game.rom",
+            "address": "0x10000000",
+            "has_address": True,
+            "loaded_bytes": 4096,
+            "crc": "0x12345678",
+        }],
+    }
+    write_json(artifacts / "result.json", result)
+    write_json(artifacts / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "observed": True,
+        "counter_status": "observed",
+        "counters": [
+            {"name": "sdram_rom_mismatch_count", "class": "sdram", "value": 1, "error": True, "error_code": "MEMORY_ROM_WRITE_MISMATCH"},
+            {"name": "sdram_first_rom_mismatch_addr", "class": "sdram", "value": 4, "error": False},
+            {"name": "sdram_first_rom_mismatch_expected", "class": "sdram", "value": 0x1122, "error": False},
+            {"name": "sdram_first_rom_mismatch_actual", "class": "sdram", "value": 0x3344, "error": False},
+            {"name": "sdram_first_rom_mismatch_dqm", "class": "sdram", "value": 1, "error": False},
+        ],
+        "errors": [
+            {"code": "MEMORY_ROM_WRITE_MISMATCH", "severity": "error", "counter": "sdram_rom_mismatch_count", "class": "sdram", "value": 1, "observed": True},
+        ],
+    })
+
+    doc = diagnose_artifacts(artifacts)
+
+    item = next(item for item in doc["diagnostics"] if item["code"] == "MEMORY_ROM_WRITE_MISMATCH")
+    assert item["observed"]["slot_id"] == 1
+    assert item["observed"]["source_file"] == "game.rom"
+    assert item["observed"]["source_offset"] == 8
+    assert item["observed"]["byte_lanes"]["names"] == ["high"]
 
 
 def test_diagnostics_warn_on_sdram_rom_coverage_gap(tmp_path):

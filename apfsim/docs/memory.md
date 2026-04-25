@@ -53,6 +53,7 @@ Every diagnosed run also writes `memory_activity.json`:
 - `declared_counters`: public counter names declared by the generated scaffold.
 - `counter_status`: `declared_not_observed`, `observed`, or `none`.
 - `counters`: live counter values when a wrapper exposes standard top-level memory counter ports.
+- `rom_validation`: source-attributed ROM-backed external RAM events. When SDRAM ROM coverage counters exist, this records the first mismatch, uninitialized ROM read, or coverage gap with model address, bank, DQM/byte-lane interpretation, expected/actual word, and best-effort data-slot/file/source-offset attribution.
 - `errors`: profile-level memory errors surfaced before live counters exist.
 - `notes`: whether this is provenance-only or live counter data.
 
@@ -66,6 +67,12 @@ Every diagnosed run also writes `memory_activity.json`:
 - `memory_counter_names`
 - `memory_error_counter_names`
 - `memory_error_codes`
+- `memory_rom_error_code`
+- `memory_rom_error_slot_id`
+- `memory_rom_error_file`
+- `memory_rom_error_source_offset`
+- `memory_rom_error_address`
+- `memory_rom_error_byte_lanes`
 
 `memory.available_models` points at catalog entries that can be used by a generated wrapper. This is deliberately separate from `memory.models`: an available model is not selected until the profile/wrapper actually instantiates or includes it.
 
@@ -146,6 +153,7 @@ After a run, `memory_activity.json.observed` should be `true` if the wrapper exp
 - `sdram_rom_coverage_gap_count` counts reads outside the ROM-backed coverage map. This is useful for identifying partial or wrong ROM payloads without treating every dummy smoke file as physical SDRAM corruption.
 - `sdram_rom_unwritten_read_count` is a hard error: the core read a ROM-backed address before the physical SDRAM write path made that word valid.
 - `sdram_rom_mismatch_count` is a hard error: physical SDRAM data differed from the expected ROM-backed word at a read address.
+- `memory_activity.rom_validation.events[]` adds source attribution for those counters. The address mapping is heuristic unless a family wrapper provides an exact map: it records whether the model word address matched a slot bridge range, a word offset inside a single loaded slot, or only an unmatched candidate list.
 - First-error evidence includes the SDRAM flat address, bank, expected/actual word where applicable, and DQM byte-lane mask. Diagnostics also include loaded slot/file candidates so generator tooling can connect a failing SDRAM read back to the APF payload selection.
 
 ## External RAM Direction

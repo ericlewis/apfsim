@@ -126,7 +126,7 @@ Read these first:
 | Data-load transcript | Catch wrong ROM/JSON, slot id, size, path, checksum, or bridge-visible RAM corruption before SD copy. | `result.data_load.slots[]`, `has_address`, `file_exists`, `load_status`, `load_error`, `loaded_bytes`, `crc`, `checksum_fnv1a64`, `readback_attempted`, `readback_matches`, `readback_mismatch_count`, `done_seen`, `bridge_summary.slot_table_ok` |
 | Manifest/package validator | Catch core/platform/asset naming mismatches before hardware. | `package_check.package_errors[]`, `package_check.package_warnings[]`, `package_check.sd_paths[]` |
 | Shim/source provenance | Make sim-only VHDL, primitive shims, and memory model libraries visible in pass results. | `source_provenance.shimmed_modules[]`, `kind`, `confidence`, `modules`, `memory_classes`, `source_provenance.generated_files[]`, `source_provenance.sim_only_paths[]` |
-| Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `source_provenance.wrapper_generation`, `memory_activity.json`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks`, `summary.row.memory_activity_observed`, `summary.row.memory_error_codes` |
+| Memory dependency intelligence | Classify SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence. | `profile.memory`, `candidate.json.memory`, `source_provenance.memory_dependencies`, `source_provenance.wrapper_generation`, `memory_activity.json`, `memory_activity.rom_validation`, `summary.row.memory_classes`, `summary.row.memory_models`, `summary.row.memory_risks`, `summary.row.memory_activity_observed`, `summary.row.memory_error_codes`, `summary.row.memory_rom_error_file`, `summary.row.memory_rom_error_source_offset` |
 
 ## Per-Core Row Normalization
 
@@ -162,6 +162,9 @@ A corpus runner should flatten each run into one JSON/TSV row. Recommended colum
 - `memory_risks`
 - `memory_activity_observed`
 - `memory_error_codes`
+- `memory_rom_error_code`
+- `memory_rom_error_file`
+- `memory_rom_error_source_offset`
 - `artifact_dir`
 
 `bin/apfsim summarize-run` emits this row today as `summary.json.row` and `summary.tsv`. `bringup` writes both automatically after package-check, run, diagnose, and optional repair-plan.
