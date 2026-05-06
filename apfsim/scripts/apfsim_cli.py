@@ -14,9 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from artifact_validator import ArtifactValidationError, annotate_result_phases, validate_artifacts
+from corpus_runner import run_corpus_manifest
 from core_discovery import DEFAULT_DISCOVERY_ROOTS, discover_cores, write_discovery_report
+from diagnostics import write_diagnostics
 from log_analyzer import analyze_logs, write_json_report
+from memory_attribution import build_rom_validation
+from package_validator import write_package_check
 from profile_generator import generate_profile_candidate
+from run_summary import write_summary
+from source_intake import build_source_contract, write_source_contract
+from wrapper_synthesizer import synthesize_wrapper_profile
 
 APFSIM_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = APFSIM_DIR / "profiles"
@@ -122,6 +129,15 @@ def load_profile(name_or_path: str) -> Profile:
     return Profile(name=name, path=path, raw=raw, root=profile_root(raw))
 
 
+def load_profile_with_root(name_or_path: str, root: Path) -> Profile:
+    path = profile_path(name_or_path)
+    raw = load_json(path)
+    raw["root"] = str(root)
+    name = str(raw.get("name") or path.stem)
+    raw = expand_profile_shim_catalog(raw, name)
+    return Profile(name=name, path=path, raw=raw, root=root)
+
+
 def resolve_path(value: str | os.PathLike[str], profile: Profile | None = None) -> Path:
     text = str(value)
     root = profile.root if profile and profile.root else APFSIM_DIR
@@ -200,6 +216,7 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
     required_paths = list(expanded.get("required_paths", []))
     verilator_flags = list(expanded.get("verilator_flags", []))
     expected_artifacts = list(expanded.get("expected_artifacts", []))
+    runtime_cwd = expanded.get("runtime_cwd")
     catalog_expanded: list[dict[str, Any]] = []
 
     for spec in specs:
@@ -230,9 +247,16 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
             verilator_flags.append(str(expand_catalog_value(value, expanded, profile_name, context)))
         for value in entry.get("expected_artifacts", []):
             expected_artifacts.append(str(expand_catalog_value(value, expanded, profile_name, context)))
+        if not runtime_cwd and entry.get("runtime_cwd"):
+            runtime_cwd = str(expand_catalog_value(entry["runtime_cwd"], expanded, profile_name, context))
         catalog_expanded.append({
             "name": name,
             "description": entry.get("description", ""),
+            "kind": entry.get("kind", ""),
+            "confidence": entry.get("confidence", ""),
+            "modules": entry.get("modules", []),
+            "memory_classes": entry.get("memory_classes", []),
+            "diagnostic_codes": entry.get("diagnostic_codes", []),
             "catalog_source": catalog_source,
             "generated_files": len(entry.get("generated_files", [])),
         })
@@ -241,6 +265,8 @@ def expand_profile_shim_catalog(raw: dict[str, Any], profile_name: str) -> dict[
     expanded["required_paths"] = dedupe_strings(required_paths)
     expanded["verilator_flags"] = dedupe_strings(verilator_flags)
     expanded["expected_artifacts"] = dedupe_strings(expected_artifacts)
+    if runtime_cwd:
+        expanded["runtime_cwd"] = str(runtime_cwd)
     expanded["shim_catalog_expanded"] = catalog_expanded
     return expanded
 
@@ -309,6 +335,15 @@ def dedupe_generated_files(values: list[Any]) -> list[Any]:
             seen.add(key)
         out.append(value)
     return out
+
+
+def memory_activity_top_port_classes(profile: Profile) -> list[str]:
+    cfg = profile.raw.get("memory_activity") if isinstance(profile.raw.get("memory_activity"), dict) else {}
+    values = cfg.get("top_port_classes", profile.raw.get("memory_activity_top_port_classes", []))
+    if isinstance(values, str):
+        values = [values]
+    allowed = {"sram", "psram", "cram", "sdram"}
+    return [cls for cls in dedupe_strings(list(values) if isinstance(values, list) else []) if cls in allowed]
 
 
 def require_keys(profile: Profile, keys: list[str]) -> None:
@@ -412,6 +447,8 @@ def sdl2_flags() -> tuple[str, str]:
 
 def verilator_base_args(profile: Profile, waves: bool = False, sdl: bool = False) -> list[str]:
     cflags = "-std=c++20 -O2 -Icpp"
+    for cls in memory_activity_top_port_classes(profile):
+        cflags = f"{cflags} -DAPFSIM_MEMORY_COUNTER_{cls.upper()}=1"
     ldflags: str | None = None
     if sdl:
         sdl_cflags, sdl_libs = sdl2_flags()
@@ -546,10 +583,14 @@ def run_profile(args: argparse.Namespace, profile: Profile) -> int:
     print_completed(proc)
     if proc.returncode != 0:
         annotate_result_phases(artifact_root)
+        write_profile_diagnostics(profile, artifact_root)
         print_failure_hint(artifact_root)
     else:
-        validate_runtime_artifacts(profile, artifact_root)
-        validate_expected_artifacts(profile, artifact_root)
+        try:
+            validate_runtime_artifacts(profile, artifact_root)
+            validate_expected_artifacts(profile, artifact_root)
+        finally:
+            write_profile_diagnostics(profile, artifact_root)
     return proc.returncode
 
 def cmd_play(args: argparse.Namespace) -> int:
@@ -636,11 +677,217 @@ def cmd_play(args: argparse.Namespace) -> int:
         return 124
     if proc.returncode != 0:
         annotate_result_phases(artifact_root)
+        write_profile_diagnostics(profile, artifact_root)
         print_failure_hint(artifact_root)
     else:
-        validate_runtime_artifacts(profile, artifact_root)
+        try:
+            validate_runtime_artifacts(profile, artifact_root)
+        finally:
+            write_profile_diagnostics(profile, artifact_root)
         print(f"apfsim play artifacts: {artifact_root}")
     return proc.returncode
+
+
+def diagnostic_profile_raw(profile: Profile) -> dict[str, Any]:
+    raw = dict(profile.raw)
+    if profile.root:
+        raw.setdefault("root", str(profile.root))
+    return raw
+
+
+def profile_video_metadata_path(profile: Profile) -> Path | None:
+    video_metadata = dict(profile.raw.get("metadata_jsons", {})).get("video")
+    return resolve_path(video_metadata, profile) if video_metadata else None
+
+
+def write_profile_diagnostics(profile: Profile, artifact_root: Path) -> dict[str, Any] | None:
+    try:
+        write_source_provenance(profile, artifact_root)
+        return write_diagnostics(
+            artifact_root,
+            profile=diagnostic_profile_raw(profile),
+            video_metadata_path=profile_video_metadata_path(profile),
+        )
+    except Exception as exc:
+        eprint(f"apfsim diagnostics warning: {exc}")
+        return None
+
+
+def write_source_provenance(profile: Profile, artifact_root: Path) -> dict[str, Any]:
+    shimmed_modules: list[dict[str, Any]] = []
+    for entry in profile.raw.get("shim_catalog_expanded", []):
+        if not isinstance(entry, dict):
+            continue
+        shimmed_modules.append({
+            "name": entry.get("name", ""),
+            "description": entry.get("description", ""),
+            "kind": entry.get("kind", ""),
+            "confidence": entry.get("confidence", ""),
+            "modules": entry.get("modules", []),
+            "memory_classes": entry.get("memory_classes", []),
+            "diagnostic_codes": entry.get("diagnostic_codes", []),
+            "catalog_source": entry.get("catalog_source", ""),
+            "generated_files": entry.get("generated_files", 0),
+        })
+    generated_files = []
+    for item in profile.raw.get("generated_files", []):
+        if not isinstance(item, dict):
+            continue
+        generated_files.append({
+            "type": item.get("type", ""),
+            "source": str(resolve_path(item["source"], profile)) if item.get("source") else "",
+            "dest": str(resolve_path(item["dest"], profile)) if item.get("dest") else "",
+            "catalog_entry": item.get("catalog_entry", ""),
+        })
+    generated_file_provenance = []
+    for item in profile.raw.get("generated_file_provenance", []):
+        if not isinstance(item, dict):
+            continue
+        record = dict(item)
+        for key in ("path", "source", "dest"):
+            if record.get(key):
+                record[key] = expand_profile_text(str(record[key]), profile)
+        generated_file_provenance.append(record)
+    memory_dependencies = profile.raw.get("memory") if isinstance(profile.raw.get("memory"), dict) else {}
+    memory_models = []
+    for cls, model in dict(memory_dependencies.get("models", {})).items():
+        if not isinstance(model, dict):
+            continue
+        memory_models.append({
+            "class": str(cls),
+            "model": str(model.get("selected", "")),
+            "confidence": str(model.get("confidence", "")),
+            "source": str(model.get("source", "")),
+            "notes": str(model.get("notes", "")),
+        })
+    explicit_sim_only_paths = [
+        expand_profile_text(str(path), profile)
+        for path in profile.raw.get("sim_only_paths", [])
+        if isinstance(path, str) and path
+    ]
+    heuristic_sim_only_paths = [
+        expand_profile_text(path, profile)
+        for path in profile.raw.get("required_paths", [])
+        if isinstance(path, str) and ("rtl_shims" in path or "generated" in path)
+    ]
+    doc = {
+        "schema": "apfsim.source_provenance.v1",
+        "profile": profile.name,
+        "profile_path": str(profile.path),
+        "root": str(profile.root) if profile.root else "",
+        "top": profile.top,
+        "filelist": str(profile.filelist),
+        "shimmed_modules": shimmed_modules,
+        "generated_files": generated_files,
+        "generated_file_provenance": generated_file_provenance,
+        "memory_dependencies": memory_dependencies,
+        "memory_models": memory_models,
+        "memory_activity": profile.raw.get("memory_activity", {}),
+        "wrapper_generation": profile.raw.get("wrapper_generation", {}),
+        "sim_only_paths": dedupe_strings(explicit_sim_only_paths + heuristic_sim_only_paths),
+    }
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    (artifact_root / "source_provenance.json").write_text(json.dumps(doc, indent=2) + "\n")
+    write_memory_activity(profile, artifact_root, doc)
+    return doc
+
+
+def write_memory_activity(profile: Profile, artifact_root: Path, provenance: dict[str, Any]) -> dict[str, Any]:
+    memory_dependencies = provenance.get("memory_dependencies") if isinstance(provenance.get("memory_dependencies"), dict) else {}
+    wrapper_generation = provenance.get("wrapper_generation") if isinstance(provenance.get("wrapper_generation"), dict) else {}
+    memory_wrapper = wrapper_generation.get("memory_models") if isinstance(wrapper_generation.get("memory_models"), dict) else {}
+    result_memory: dict[str, Any] = {}
+    result: dict[str, Any] = {}
+    result_path = artifact_root / "result.json"
+    if result_path.exists():
+        try:
+            result = load_json(result_path)
+            if isinstance(result.get("memory_activity"), dict):
+                result_memory = result["memory_activity"]
+        except Exception:
+            result = {}
+            result_memory = {}
+    shimmed = [item for item in provenance.get("shimmed_modules", []) if isinstance(item, dict)]
+    memory_shims = [
+        {
+            "name": item.get("name", ""),
+            "kind": item.get("kind", ""),
+            "confidence": item.get("confidence", ""),
+            "memory_classes": item.get("memory_classes", []),
+        }
+        for item in shimmed
+        if item.get("memory_classes")
+    ]
+    errors = []
+    for risk in memory_dependencies.get("risks", []):
+        if not isinstance(risk, dict):
+            continue
+        if str(risk.get("severity", "warning")) != "error":
+            continue
+        errors.append({
+            "code": str(risk.get("code") or "MEMORY_MODEL_REQUIRED"),
+            "severity": "error",
+            "message": str(risk.get("message") or ""),
+            "observed": False,
+        })
+    runtime_errors = [
+        item for item in result_memory.get("errors", [])
+        if isinstance(item, dict) and str(item.get("code", ""))
+    ]
+    classes = [str(item) for item in memory_dependencies.get("classes", [])]
+    declared_counters = [str(item) for item in memory_wrapper.get("activity_counters", [])]
+    for item in wrapper_generation.values():
+        if not isinstance(item, dict):
+            continue
+        model = item.get("memory_model")
+        if not isinstance(model, dict):
+            continue
+        declared_counters.extend(str(counter) for counter in model.get("counter_ports", []))
+    declared_counters = dedupe_strings(declared_counters)
+    observed = bool(result_memory.get("observed"))
+    runtime_counters = [
+        item for item in result_memory.get("counters", [])
+        if isinstance(item, dict) and str(item.get("name", ""))
+    ]
+    rom_regions = [
+        item for item in memory_dependencies.get("rom_regions", [])
+        if isinstance(item, dict)
+    ]
+    rom_validation = build_rom_validation({"counters": runtime_counters, "rom_regions": rom_regions}, result)
+    enriched_runtime_errors = []
+    for error in runtime_errors:
+        enriched = dict(error)
+        for event in rom_validation["events"]:
+            if event.get("code") == enriched.get("code") and (
+                not enriched.get("counter") or event.get("counter") == enriched.get("counter")
+            ):
+                enriched["first_event"] = event
+                enriched["source"] = event.get("source", {})
+                break
+        enriched_runtime_errors.append(enriched)
+    doc = {
+        "schema": "apfsim.memory_activity.v1",
+        "profile": profile.name,
+        "observed": observed,
+        "classes": classes,
+        "external_classes": [str(item) for item in memory_dependencies.get("external_classes", [])],
+        "models": provenance.get("memory_models", []),
+        "selected_shims": memory_shims,
+        "wrapper_generation": memory_wrapper,
+        "declared_counters": declared_counters,
+        "counter_status": "observed" if observed else ("declared_not_observed" if declared_counters else "none"),
+        "counters": runtime_counters if observed else [],
+        "rom_regions": rom_regions,
+        "rom_validation": rom_validation,
+        "errors": errors + enriched_runtime_errors,
+        "notes": [
+            "Memory activity was observed through standard apfsim top-level counter ports." if observed else
+            "Memory activity is a provenance artifact unless the generated wrapper wires public counter probes.",
+            "Use data-slot readback and bridge traces to catch ROM corruption until live memory counters are connected.",
+        ] if classes else ["No memory dependencies were discovered for this profile."],
+    }
+    (artifact_root / "memory_activity.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return doc
 
 
 def validate_runtime_artifacts(profile: Profile, artifact_root: Path) -> None:
@@ -679,12 +926,391 @@ def cmd_validate_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diagnose(args: argparse.Namespace) -> int:
+    artifact_root = resolve_user_path(args.artifact_dir)
+    profile_raw: dict[str, Any] | None = None
+    video_metadata_path = resolve_user_path(args.video_json) if args.video_json else None
+    if args.profile:
+        profile = load_profile(args.profile)
+        profile_raw = diagnostic_profile_raw(profile)
+        if video_metadata_path is None:
+            video_metadata_path = profile_video_metadata_path(profile)
+    doc = write_diagnostics(artifact_root, profile=profile_raw, video_metadata_path=video_metadata_path)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        summary = doc["summary"]
+        print(
+            "diagnostics: "
+            f"status={doc['status']} "
+            f"errors={summary['errors']} "
+            f"warnings={summary['warnings']} "
+            f"infos={summary['infos']}"
+        )
+        for item in doc["diagnostics"]:
+            print(f"{item['severity'].upper()} {item['code']}: {item['summary']}")
+        print(f"artifacts: {artifact_root}")
+    return 1 if args.strict and doc["summary"]["errors"] else 0
+
+
+def cmd_bringup(args: argparse.Namespace) -> int:
+    if not args.profile and not (args.root and (args.auto_profile or args.synth_wrapper)):
+        raise ApfSimError("bringup requires --profile or --root with --auto-profile/--synth-wrapper", phase="bringup")
+
+    out = resolve_user_path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    profile: Profile
+    generated_payload: dict[str, Any] | None = None
+    if args.root and args.synth_wrapper:
+        root = resolve_user_path(args.root)
+        generated_dir = out / "synth-wrapper"
+        try:
+            synthesis = synthesize_wrapper_profile(
+                root,
+                generated_dir,
+                apfsim_dir=APFSIM_DIR,
+                profile_name=args.name,
+                source_top=args.source_top,
+                force=True,
+            )
+        except FileExistsError as exc:
+            raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+        attach_source_contract(synthesis, root, name=args.name, source_top=args.source_top)
+        profile_path = Path(synthesis["paths"]["profile"])
+        raw = load_json(profile_path)
+        raw["root"] = str(root)
+        name = str(raw.get("name") or profile_path.stem)
+        raw = expand_profile_shim_catalog(raw, name)
+        profile = Profile(name=name, path=profile_path, raw=raw, root=root)
+        generated_payload = {
+            "schema": "apfsim.bringup_profile.v1",
+            "profile": name,
+            "root": str(root),
+            "kind": "synth-wrapper",
+            "paths": synthesis["paths"],
+            "warnings": synthesis.get("warnings", []),
+            "blockers": synthesis.get("blockers", []),
+            "confidence": synthesis.get("confidence", 0),
+        }
+        (out / "profile.generated.json").write_text(json.dumps(generated_payload, indent=2) + "\n")
+    elif args.root and args.auto_profile:
+        root = resolve_user_path(args.root)
+        generated_dir = out / "generated-profile"
+        generated = generate_profile_candidate(
+            root,
+            generated_dir,
+            apfsim_dir=APFSIM_DIR,
+            profile_name=args.name,
+            catalog_path=resolve_user_path(args.catalog) if args.catalog else DEFAULT_SHIM_CATALOG,
+            force=True,
+        )
+        raw = load_json(generated.profile_path)
+        raw["root"] = str(root)
+        name = str(raw.get("name") or generated.profile_path.stem)
+        raw = expand_profile_shim_catalog(raw, name)
+        profile = Profile(name=name, path=generated.profile_path, raw=raw, root=root)
+        generated_payload = {
+            "schema": "apfsim.bringup_profile.v1",
+            "profile": name,
+            "root": str(root),
+            "paths": {
+                "profile": str(generated.profile_path),
+                "filelist": str(generated.filelist_path),
+                "scenario": str(generated.scenario_path),
+                "notes": str(generated.notes_path),
+                "report": str(generated.report_path),
+            },
+            "selected_shims": generated.selected_shims,
+            "warnings": generated.warnings,
+        }
+        (out / "profile.generated.json").write_text(json.dumps(generated_payload, indent=2) + "\n")
+    else:
+        profile = load_profile_with_root(args.profile, resolve_user_path(args.root)) if args.root else load_profile(args.profile)
+
+    slots = list(args.slot or [])
+    if args.rom:
+        slots.append(f"{args.rom_slot_id}={resolve_user_path(args.rom)}")
+    run_args = argparse.Namespace(**vars(args))
+    run_args.profile = profile.name
+    run_args.slot = slots
+    run_args.artifacts = str(args.artifacts or (out / "run"))
+    run_args.clean_artifacts = args.clean_artifacts
+    artifact_root = resolve_path(run_args.artifacts, profile)
+    package_path = artifact_root / "package_check.json"
+    package_root = resolve_user_path(args.root) if args.root else profile.root
+    rc = run_profile(run_args, profile)
+    if package_root:
+        try:
+            write_package_check(package_root, package_path, expected_platform_id=args.expected_platform_id)
+        except Exception as exc:
+            eprint(f"apfsim package-check warning: {exc}")
+
+    diagnostics_path = artifact_root / "diagnostics.json"
+    diagnostics_doc = load_json(diagnostics_path) if diagnostics_path.exists() else {}
+    if args.repair or args.emit_patches:
+        write_repair_plan(artifact_root, diagnostics_doc, emit_patches=args.emit_patches)
+    summary_doc = write_summary(
+        artifact_root,
+        package_check_path=package_path if package_path.exists() else None,
+    )
+
+    first_error = first_diagnostic_code(diagnostics_doc, severity="error")
+    if rc != 0 or first_error:
+        print(f"FAIL {first_error or 'BRINGUP_FAILED'}")
+    else:
+        print("PASS bringup")
+    print(f"artifacts: {artifact_root}")
+    print(f"summary: {artifact_root / 'summary.json'}")
+    if generated_payload:
+        print(f"generated profile: {generated_payload['paths']['profile']}")
+    return rc if rc != 0 else (1 if first_error or summary_doc.get("ok") is False else 0)
+
+
+def cmd_package_check(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.json_out) if args.json_out else APFSIM_DIR / "output" / "package-check" / root.name / "package_check.json"
+    doc = write_package_check(root, output, expected_platform_id=args.expected_platform_id)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        print(
+            "package-check: "
+            f"ok={bool(doc.get('ok'))} "
+            f"errors={len(doc.get('package_errors', []))} "
+            f"warnings={len(doc.get('package_warnings', []))}"
+        )
+        print(f"json: {output}")
+        for item in doc.get("package_errors", []):
+            print(f"ERROR {item.get('code')}: {item.get('message')}")
+        for item in doc.get("package_warnings", []):
+            print(f"WARN {item.get('code')}: {item.get('message')}")
+    return 1 if args.strict and not doc.get("ok") else 0
+
+
+def cmd_summarize_run(args: argparse.Namespace) -> int:
+    artifact_dir = resolve_user_path(args.artifact_dir)
+    package_check_path = resolve_user_path(args.package_check) if args.package_check else None
+    json_out = resolve_user_path(args.json_out) if args.json_out else None
+    tsv_out = resolve_user_path(args.tsv_out) if args.tsv_out else None
+    doc = write_summary(artifact_dir, json_out=json_out, tsv_out=tsv_out, package_check_path=package_check_path)
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    else:
+        row = doc["row"]
+        print(
+            "summary: "
+            f"ok={row['ok']} "
+            f"first_error={row['first_error_code'] or 'none'} "
+            f"video={row['active_width']}x{row['active_height']} "
+            f"audio={row['audio_activity']} "
+            f"loaded_bytes={row['loaded_bytes_total']}"
+        )
+    return 1 if args.strict and not doc.get("ok") else 0
+
+
+def cmd_corpus_run(args: argparse.Namespace) -> int:
+    manifest = resolve_user_path(args.manifest)
+    out = resolve_user_path(args.out)
+    apfsim_cmd = args.apfsim_cmd or str(APFSIM_DIR / "bin" / "apfsim")
+    try:
+        doc = run_corpus_manifest(
+            manifest,
+            out,
+            apfsim_cmd=apfsim_cmd,
+            strict=args.strict,
+            fail_fast=args.fail_fast,
+        )
+    except (OSError, ValueError) as exc:
+        raise ApfSimError(str(exc), phase="corpus") from exc
+    totals = doc["totals"]
+    print(
+        "corpus: "
+        f"total={totals['total']} "
+        f"passed={totals['passed']} "
+        f"failed={totals['failed']} "
+        f"skipped={totals['skipped']}"
+    )
+    if doc.get("top_blockers"):
+        blockers = ", ".join(f"{item['code']}={item['count']}" for item in doc["top_blockers"][:8])
+        print(f"top blockers: {blockers}")
+    print(f"json: {out / 'corpus_summary.json'}")
+    print(f"tsv: {out / 'corpus_summary.tsv'}")
+    if args.json:
+        print(json.dumps(doc, indent=2 if args.pretty else None, sort_keys=True))
+    return 1 if args.strict and totals["failed"] else 0
+
+
+def first_diagnostic_code(doc: dict[str, Any], *, severity: str) -> str:
+    for item in doc.get("diagnostics", []):
+        if isinstance(item, dict) and item.get("severity") == severity:
+            return str(item.get("code") or "")
+    return ""
+
+
+def write_repair_plan(artifact_root: Path, diagnostics_doc: dict[str, Any], *, emit_patches: bool = False) -> None:
+    repairs: list[dict[str, Any]] = []
+    memory_hints: list[dict[str, Any]] = []
+    for diagnostic in diagnostics_doc.get("diagnostics", []):
+        if not isinstance(diagnostic, dict):
+            continue
+        code = str(diagnostic.get("code") or "")
+        for repair in diagnostic.get("repairs", []):
+            if not isinstance(repair, dict):
+                continue
+            item = dict(repair)
+            item["diagnostic_code"] = code
+            item["phase"] = diagnostic.get("phase")
+            item["severity"] = diagnostic.get("severity")
+            repairs.append(item)
+        for hint in memory_repair_hints(code):
+            item = {
+                **hint,
+                "diagnostic_code": code,
+                "phase": diagnostic.get("phase"),
+                "severity": diagnostic.get("severity"),
+            }
+            repairs.append(item)
+            memory_hints.append(item)
+    plan = {
+        "schema": "apfsim.repair_plan.v1",
+        "artifact_dir": str(artifact_root),
+        "automatic_apply": False,
+        "patches_emitted": False,
+        "repairs": repairs,
+    }
+    if emit_patches:
+        patches_dir = artifact_root / "patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+        readme = patches_dir / "README.md"
+        readme.write_text(
+            "# apfsim patches\n\n"
+            "This bring-up run produced repair suggestions, but this slice only emits a reviewable repair plan. "
+            "Source patches are intentionally not synthesized until the matching repair rule is implemented.\n",
+            encoding="utf-8",
+        )
+        if memory_hints:
+            write_memory_repair_hints(patches_dir, memory_hints)
+        plan["patches_dir"] = str(patches_dir)
+    (artifact_root / "repair-plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+
+def memory_repair_hints(code: str) -> list[dict[str, Any]]:
+    table: dict[str, list[dict[str, Any]]] = {
+        "DATA_SLOT_READBACK_MISMATCH": [
+            {
+                "kind": "memory_corruption_probe",
+                "confidence": 0.80,
+                "description": "Enable ROM/data-slot readback and inspect address lane, byte lane, endian, and write-strobe timing around the failing slot.",
+                "actions": [
+                    "Run the scenario with verify_readback enabled on the affected slot.",
+                    "Inspect bridge.log for observed_first_write_address/observed_last_write_address and short writes.",
+                    "If the slot maps to external RAM, wire the generated memory model counters and rerun.",
+                ],
+            }
+        ],
+        "SRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.72,
+                "description": "Select the public async SRAM pin model and generate a wrapper that connects SRAM pins to apfsim_async_sram_16_model.",
+                "profile_fields": {"shim_catalog": ["external_sram_pin_model"]},
+            }
+        ],
+        "PSRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.68,
+                "description": "Select the PSRAM transactional model and wire the generated wrapper to the core's PSRAM request/ack interface.",
+                "profile_fields": {"shim_catalog": ["psram_cram_transactional_models"]},
+            }
+        ],
+        "CRAM_MODEL_REQUIRED": [
+            {
+                "kind": "profile_patch_hint",
+                "confidence": 0.68,
+                "description": "Select the CRAM transactional model and wire the generated wrapper to the core's CRAM/cart-RAM interface.",
+                "profile_fields": {"shim_catalog": ["psram_cram_transactional_models"]},
+            }
+        ],
+        "MEMORY_BYTE_ENABLE_MISMATCH": [
+            {
+                "kind": "wrapper_patch_hint",
+                "confidence": 0.70,
+                "description": "Audit byte-enable polarity and lane ordering; Pocket cores often corrupt ROMs when low/high byte strobes are swapped or active-low lanes are treated as active-high.",
+            }
+        ],
+        "MEMORY_WIDTH_MISMATCH": [
+            {
+                "kind": "wrapper_patch_hint",
+                "confidence": 0.66,
+                "description": "Insert an explicit width adapter between bridge-loaded 32-bit words and the external RAM data bus.",
+            }
+        ],
+        "MEMORY_UNINITIALIZED_READ": [
+            {
+                "kind": "scenario_patch_hint",
+                "confidence": 0.62,
+                "description": "Add a ROM-load stress scenario and hold reset until required data-slot writes complete.",
+            }
+        ],
+        "MEMORY_STALL_TIMEOUT": [
+            {
+                "kind": "memory_model_hint",
+                "confidence": 0.62,
+                "description": "Use a latency-configurable memory profile and check that the core handles ack/busy stalls instead of assuming zero-latency RAM.",
+            }
+        ],
+    }
+    return [dict(item) for item in table.get(code, [])]
+
+
+def write_memory_repair_hints(patches_dir: Path, hints: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Memory Repair Hints",
+        "",
+        "These are reviewable hints, not source mutations. Apply the relevant profile/wrapper changes manually or through a generator rule.",
+        "",
+    ]
+    for idx, hint in enumerate(hints, start=1):
+        lines.extend([
+            f"## {idx}. {hint.get('diagnostic_code', 'UNKNOWN')}",
+            "",
+            f"- kind: `{hint.get('kind', '')}`",
+            f"- confidence: `{hint.get('confidence', '')}`",
+            f"- description: {hint.get('description', '')}",
+            "",
+        ])
+        actions = hint.get("actions")
+        if isinstance(actions, list) and actions:
+            lines.append("Actions:")
+            for action in actions:
+                lines.append(f"- {action}")
+            lines.append("")
+        profile_fields = hint.get("profile_fields")
+        if isinstance(profile_fields, dict) and profile_fields:
+            lines.append("Profile fields:")
+            lines.append("```json")
+            lines.append(json.dumps(profile_fields, indent=2))
+            lines.append("```")
+            lines.append("")
+    (patches_dir / "memory_model_hints.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def print_failure_hint(artifact_root: Path) -> None:
     result = artifact_root / "result.json"
     if result.exists():
         try:
             data = json.loads(result.read_text())
             eprint(f"apfsim failure phase={data.get('failed_phase', '')} message={data.get('message', '')}")
+        except json.JSONDecodeError:
+            pass
+    diagnostics = artifact_root / "diagnostics.json"
+    if diagnostics.exists():
+        try:
+            data = json.loads(diagnostics.read_text())
+            code = first_diagnostic_code(data, severity="error")
+            if code:
+                eprint(f"apfsim diagnostic={code}")
         except json.JSONDecodeError:
             pass
     eprint(f"apfsim artifacts: {artifact_root}")
@@ -724,11 +1350,11 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def matrix_profiles(name: str) -> list[str]:
     if name == "ci":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram"]
     if name == "local-fast":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram", "core_template"]
     if name == "local-real":
-        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
+        return ["mock_port_gate", "mock_target_commands", "mock_lifecycle", "mock_external_sram", "core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
     if name == "official-examples":
         return ["core_template", "interact", "kbmouse_targetdata", "basicassets", "basicchip32"]
     raise ApfSimError(f"unknown matrix: {name}")
@@ -795,8 +1421,15 @@ VIDEO_SHAPE_FIELDS = [
     "stable_dimensions",
     "protocol_valid",
     "frames_measured",
+    "frames_considered",
     "frames_completed",
     "ignored_startup_frames",
+    "startup_frames_ignored",
+    "first_error_cycle",
+    "first_error_frame",
+    "first_error_pixel",
+    "first_error_code",
+    "trace_window",
     "source_signals",
 ]
 
@@ -1311,6 +1944,8 @@ def cmd_generate_profile(args: argparse.Namespace) -> int:
             "report": str(generated.report_path),
         },
         "selected_shims": generated.selected_shims,
+        "selected_shim_details": generated.selected_shim_details,
+        "risks": generated.risks,
         "warnings": generated.warnings,
     }
     if generated.qsf:
@@ -1329,6 +1964,75 @@ def cmd_generate_profile(args: argparse.Namespace) -> int:
             print("warnings:")
             for warning in generated.warnings:
                 print(f"  - {warning}")
+    return 0
+
+
+def cmd_synth_wrapper(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.output)
+    try:
+        synthesis = synthesize_wrapper_profile(
+            root,
+            output,
+            apfsim_dir=APFSIM_DIR,
+            profile_name=args.name,
+            source_top=args.top,
+            force=args.force,
+        )
+    except FileExistsError as exc:
+        raise ApfSimError(str(exc), phase="synth-wrapper") from exc
+    attach_source_contract(synthesis, root, name=args.name, source_top=args.top)
+    if args.json:
+        print(json.dumps(synthesis, indent=2, sort_keys=True))
+    else:
+        print(f"wrapper synthesis: {synthesis['status']} confidence={synthesis['confidence']}")
+        print(f"profile: {synthesis['paths']['profile']}")
+        print(f"wrapper: {synthesis['paths']['wrapper']}")
+        if synthesis.get("blockers"):
+            print("blockers:")
+            for item in synthesis["blockers"]:
+                print(f"  - {item['code']}: {item['message']}")
+    return 0
+
+
+def attach_source_contract(synthesis: dict[str, Any], root: Path, *, name: str | None, source_top: str | None) -> None:
+    profile_path = Path(str(synthesis["paths"]["profile"]))
+    output_dir = profile_path.parent
+    contract = build_source_contract(root, output_dir=output_dir, profile_name=name, source_top=source_top)
+    json_path, md_path = write_source_contract(contract, output_dir)
+    synthesis["paths"]["source_contract"] = str(json_path)
+    synthesis["paths"]["source_contract_markdown"] = str(md_path)
+    report_path = output_dir / "wrapper_synthesis.json"
+    if report_path.exists():
+        report = load_json(report_path)
+        report.setdefault("paths", {}).update({
+            "source_contract": str(json_path),
+            "source_contract_markdown": str(md_path),
+        })
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+
+
+def cmd_intake(args: argparse.Namespace) -> int:
+    root = resolve_user_path(args.root)
+    output = resolve_user_path(args.output)
+    contract = build_source_contract(root, output_dir=output, profile_name=args.name, source_top=args.top)
+    json_path, md_path = write_source_contract(contract, output)
+    contract["paths"] = {
+        "contract": str(json_path),
+        "markdown": str(md_path),
+    }
+    if args.json:
+        print(json.dumps(contract, indent=2, sort_keys=True))
+    else:
+        classification = contract["classification"]
+        print(f"intake: {classification['mode']} status={classification['status']} confidence={classification['confidence']}")
+        print(f"top: {contract['top']['selected'] or '-'}")
+        print(f"contract: {json_path}")
+        print(f"markdown: {md_path}")
+        if contract.get("blockers"):
+            print("blockers:")
+            for item in contract["blockers"]:
+                print(f"  - {item['severity']} {item['code']}: {item['message']}")
     return 0
 
 
@@ -1353,6 +2057,8 @@ def cmd_shim_catalog(args: argparse.Namespace) -> int:
                 if isinstance(item, dict) and item.get("catalog_entry")
             ],
             "required_paths": profile.raw.get("required_paths", []),
+            "runtime_cwd": profile.raw.get("runtime_cwd", ""),
+            "verilator_flags": profile.raw.get("verilator_flags", []),
         }
     else:
         catalog = load_shim_catalog(catalog_path)
@@ -1363,6 +2069,11 @@ def cmd_shim_catalog(args: argparse.Namespace) -> int:
                 {
                     "name": name,
                     "description": entry.get("description", ""),
+                    "kind": entry.get("kind", ""),
+                    "confidence": entry.get("confidence", ""),
+                    "modules": entry.get("modules", []),
+                    "memory_classes": entry.get("memory_classes", []),
+                    "diagnostic_codes": entry.get("diagnostic_codes", []),
                     "generated_files": len(entry.get("generated_files", [])),
                     "required_paths": len(entry.get("required_paths", [])),
                 }
@@ -1397,6 +2108,24 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_args(run)
     run.set_defaults(func=lambda ns: run_profile(ns, load_profile(ns.profile)))
 
+    bringup = sub.add_parser("bringup", help="discover/profile/run/diagnose one APF core bring-up")
+    bringup.add_argument("--profile", help="existing apfsim profile name or path")
+    bringup.add_argument("--root", help="Pocket core checkout/package root; binds {root} for --profile or generates a profile with --auto-profile")
+    bringup.add_argument("--auto-profile", action="store_true", help="generate a reviewable profile candidate before running")
+    bringup.add_argument("--synth-wrapper", action="store_true", help="synthesize a reviewable APF wrapper/profile before running")
+    bringup.add_argument("--source-top", help="source module to instantiate when using --synth-wrapper")
+    bringup.add_argument("--name", help="generated profile name when using --auto-profile")
+    bringup.add_argument("--catalog", help="shim catalog JSON path; defaults to catalogs/shims.json")
+    bringup.add_argument("--rom", help="ROM/asset file to bind to --rom-slot-id")
+    bringup.add_argument("--rom-slot-id", type=int, default=1, help="data slot id used for --rom; default 1")
+    bringup.add_argument("--expected-platform-id", help="fail package-check if core.json does not declare this platform id")
+    bringup.add_argument("--out", required=True, help="bring-up artifact directory")
+    bringup.add_argument("--repair", action="store_true", help="emit repair-plan.json from diagnostics")
+    bringup.add_argument("--explain", action="store_true", help="reserved for verbose diagnostic explanations")
+    bringup.add_argument("--emit-patches", action="store_true", help="create patches/ when repair rules can emit reviewable patches")
+    add_run_args(bringup, include_profile=False)
+    bringup.set_defaults(func=cmd_bringup)
+
     play = sub.add_parser("play", help="boot a profile and play it in an SDL2 window")
     add_run_args(play)
     play.add_argument("--scale", type=int, default=3, help="integer window scale for active video")
@@ -1413,6 +2142,14 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--output", default="output/core-inventory", help="directory for cores.json and cores.md")
     discover.set_defaults(func=cmd_discover)
 
+    intake = sub.add_parser("intake", help="build a source contract for one core checkout before profile/wrapper generation")
+    intake.add_argument("--root", required=True, help="Pocket/core checkout root")
+    intake.add_argument("--top", help="source module to classify; defaults to QSF top or best-scored module")
+    intake.add_argument("--name", help="contract/profile name; defaults to normalized checkout name")
+    intake.add_argument("--output", "--out", default="output/intake", help="directory for source_contract.json and source_contract.md")
+    intake.add_argument("--json", action="store_true", help="emit machine-readable source contract")
+    intake.set_defaults(func=cmd_intake)
+
     gen_profile = sub.add_parser("generate-profile", help="generate a reviewable profile/filelist/scenario candidate for a core checkout")
     gen_profile.add_argument("--root", required=True, help="Pocket core checkout root")
     gen_profile.add_argument("--name", help="profile name; defaults to normalized checkout name")
@@ -1421,6 +2158,15 @@ def build_parser() -> argparse.ArgumentParser:
     gen_profile.add_argument("--force", action="store_true", help="overwrite an existing generated bundle")
     gen_profile.add_argument("--json", action="store_true", help="emit machine-readable generation report")
     gen_profile.set_defaults(func=cmd_generate_profile)
+
+    synth = sub.add_parser("synth-wrapper", help="synthesize a reviewable APF core_top wrapper/profile for a source top")
+    synth.add_argument("--root", required=True, help="Pocket/core checkout root")
+    synth.add_argument("--top", help="source module to instantiate; defaults to QSF top or best-scored module")
+    synth.add_argument("--name", help="profile name; defaults to normalized checkout name")
+    synth.add_argument("--output", default="output/synth-wrapper", help="directory for synthesized wrapper/profile bundles")
+    synth.add_argument("--force", action="store_true", help="overwrite an existing synthesized bundle")
+    synth.add_argument("--json", action="store_true", help="emit machine-readable wrapper synthesis report")
+    synth.set_defaults(func=cmd_synth_wrapper)
 
     shim_catalog = sub.add_parser("shim-catalog", help="list shim/substitution catalog entries or show profile expansion")
     shim_catalog.add_argument("--catalog", help="catalog JSON path; defaults to catalogs/shims.json")
@@ -1433,6 +2179,46 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--video-json", help="optional APF video.json to compare frame dimensions against")
     validate.add_argument("--no-update", action="store_true", help="do not add derived phases/lifecycle to result.json or lifecycle.json")
     validate.set_defaults(func=cmd_validate_artifacts)
+
+    package = sub.add_parser("package-check", help="validate APF package metadata and SD-card path expectations")
+    package.add_argument("--root", required=True, help="core checkout or package root")
+    package.add_argument("--expected-platform-id", help="expected platform id that must be declared by core.json")
+    package.add_argument("--json-out", help="write package_check.json here; defaults to apfsim/output/package-check/<root>/package_check.json")
+    package.add_argument("--json", action="store_true", help="print package_check JSON")
+    package.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    package.add_argument("--strict", action="store_true", help="return nonzero when package errors are present")
+    package.set_defaults(func=cmd_package_check)
+
+    summarize = sub.add_parser("summarize-run", help="flatten run artifacts into summary.json and summary.tsv")
+    summarize.add_argument("artifact_dir", help="run artifact directory")
+    summarize.add_argument("--package-check", help="optional package_check.json path; defaults to artifact_dir/package_check.json")
+    summarize.add_argument("--json-out", help="write summary JSON here; defaults to artifact_dir/summary.json")
+    summarize.add_argument("--tsv-out", help="write one-row TSV here; defaults to artifact_dir/summary.tsv")
+    summarize.add_argument("--json", action="store_true", help="print summary JSON")
+    summarize.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    summarize.add_argument("--strict", action="store_true", help="return nonzero when summary ok=false")
+    summarize.set_defaults(func=cmd_summarize_run)
+
+    corpus = sub.add_parser("corpus", help="run manifest-driven bring-up corpora and aggregate rows")
+    corpus_sub = corpus.add_subparsers(dest="corpus_cmd", required=True)
+    corpus_run = corpus_sub.add_parser("run", help="run a corpus manifest through bringup/package stages")
+    corpus_run.add_argument("--manifest", required=True, help="corpus manifest JSON or simple YAML")
+    corpus_run.add_argument("--out", required=True, help="corpus artifact directory")
+    corpus_run.add_argument("--strict", action="store_true", help="return nonzero if any core fails")
+    corpus_run.add_argument("--fail-fast", action="store_true", help="stop after the first failed core")
+    corpus_run.add_argument("--apfsim-cmd", help=argparse.SUPPRESS)
+    corpus_run.add_argument("--json", action="store_true", help="print corpus_summary JSON after the concise summary")
+    corpus_run.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    corpus_run.set_defaults(func=cmd_corpus_run)
+
+    diagnose = sub.add_parser("diagnose", help="classify run artifacts into stable APF contract diagnostics")
+    diagnose.add_argument("artifact_dir", help="directory containing result.json and run artifacts")
+    diagnose.add_argument("--profile", help="optional profile for expected metadata and profile risk context")
+    diagnose.add_argument("--video-json", help="optional APF video.json to compare against")
+    diagnose.add_argument("--json", action="store_true", help="print diagnostics JSON")
+    diagnose.add_argument("--pretty", action="store_true", help="pretty-print JSON output")
+    diagnose.add_argument("--strict", action="store_true", help="return nonzero when error diagnostics are present")
+    diagnose.set_defaults(func=cmd_diagnose)
 
     video_shape = sub.add_parser("video-shape", help="extract or run stable APF-facing video timing/shape discovery")
     video_shape.add_argument("result", nargs="?", help="path to result.json, video_shape.json, or an artifact directory")

@@ -14,6 +14,21 @@
         "properties": {
           "name": { "type": "string" },
           "description": { "type": "string" },
+          "kind": { "type": "string" },
+          "confidence": { "type": "string" },
+          "modules": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "memory_classes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "diagnostic_codes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "detect": { "type": "object" },
           "source_candidates": {
             "type": "array",
             "items": { "type": "string" }
@@ -22,15 +37,24 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "fallback_required_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "verilator_flags": {
             "type": "array",
             "items": { "type": "string" }
           },
+          "runtime_cwd": { "type": "string" },
           "expected_artifacts": {
             "type": "array",
             "items": { "type": "string" }
           },
           "filelist_entries": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "fallback_filelist_entries": {
             "type": "array",
             "items": { "type": "string" }
           },

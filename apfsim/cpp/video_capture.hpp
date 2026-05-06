@@ -76,7 +76,8 @@ public:
     }
 
     template <typename Top>
-    void sample(const Top* top) {
+    void sample(const Top* top, uint64_t sim_cycle = 0) {
+        current_cycle_ = sim_cycle;
         const bool clk = top->video_rgb_clock != 0;
         if (clk && !prev_clk_) on_pixel_clock(top);
         prev_clk_ = clk;
@@ -86,12 +87,52 @@ public:
     uint64_t frames_completed() const { return frames_completed_; }
     uint64_t changed_frames() const { return changed_frames_; }
     uint64_t max_changed_pixels_from_previous() const { return max_changed_pixels_from_previous_; }
+    uint64_t frames_in_range(uint64_t start_frame, uint64_t end_frame = 0) const {
+        uint64_t count = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            ++count;
+        }
+        return count;
+    }
+    uint64_t changed_frames_in_range(uint64_t start_frame, uint64_t end_frame = 0, uint64_t min_changed_pixels = 1) const {
+        uint64_t count = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            if (frame.changed_pixels_from_previous >= min_changed_pixels) ++count;
+        }
+        return count;
+    }
+    uint64_t max_changed_pixels_in_range(uint64_t start_frame, uint64_t end_frame = 0) const {
+        uint64_t max_changed = 0;
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            max_changed = std::max(max_changed, frame.changed_pixels_from_previous);
+        }
+        return max_changed;
+    }
+    uint64_t first_changed_frame_in_range(uint64_t start_frame, uint64_t end_frame = 0, uint64_t min_changed_pixels = 1) const {
+        for (const auto& frame : frame_history_) {
+            if (frame.frame < start_frame) continue;
+            if (end_frame && frame.frame > end_frame) continue;
+            if (frame.changed_pixels_from_previous >= min_changed_pixels) return frame.frame;
+        }
+        return 0;
+    }
     const FrameMetadata& last_metadata() const { return last_metadata_; }
     const std::vector<FrameMetadata>& frame_history() const { return frame_history_; }
     const std::vector<uint32_t>& last_frame_pixels() const { return last_frame_pixels_; }
     size_t last_frame_width() const { return last_metadata_.active_width; }
     size_t last_frame_height() const { return last_metadata_.active_height; }
     uint64_t errors() const { return total_errors_; }
+    bool has_first_error() const { return first_error_seen_; }
+    uint64_t first_error_cycle() const { return first_error_cycle_; }
+    uint64_t first_error_frame() const { return first_error_frame_; }
+    uint64_t first_error_pixel() const { return first_error_pixel_; }
+    const std::string& first_error_code() const { return first_error_code_; }
     uint64_t errors_after_startup_frames(uint64_t ignored_frames) const {
         uint64_t errors = 0;
         for (const auto& frame : frame_history_) {
@@ -154,6 +195,12 @@ public:
         last_de_fall_pixel_ = 0;
         have_de_fall_ = false;
         total_errors_ = 0;
+        current_cycle_ = 0;
+        first_error_seen_ = false;
+        first_error_cycle_ = 0;
+        first_error_frame_ = 0;
+        first_error_pixel_ = 0;
+        first_error_code_.clear();
         changed_frames_ = 0;
         max_changed_pixels_from_previous_ = 0;
         current_ = {};
@@ -220,15 +267,13 @@ private:
 
         if (!vs && prev_vs_) {
             if (vs_width_ != 1) {
-                ++current_.pulse_width_errors;
-                ++total_errors_;
+                record_error("vs_pulse_width", current_.pulse_width_errors);
             }
             vs_width_ = 0;
         }
         if (!hs && prev_hs_) {
             if (hs_width_ != 1) {
-                ++current_.pulse_width_errors;
-                ++total_errors_;
+                record_error("hs_pulse_width", current_.pulse_width_errors);
             }
             hs_width_ = 0;
         }
@@ -239,15 +284,13 @@ private:
                 first_de_seen_ = true;
             }
             if (!have_hs_seen_) {
-                ++current_.de_errors;
-                ++total_errors_;
+                record_error("de_before_hs", current_.de_errors);
             } else {
                 const uint64_t gap = pixel_in_frame_ >= last_hs_rise_pixel_ ? pixel_in_frame_ - last_hs_rise_pixel_ : 0;
                 current_.hs_to_de_gap_min = std::min(current_.hs_to_de_gap_min, gap);
             }
             if (de_seen_this_line_ || de_closed_this_line_) {
-                ++current_.de_errors;
-                ++total_errors_;
+                record_error("de_multiple_per_line", current_.de_errors);
             }
             de_seen_this_line_ = true;
         }
@@ -259,14 +302,12 @@ private:
         }
 
         if (skip && !de) {
-            ++current_.skip_errors;
-            ++total_errors_;
+            record_error("skip_outside_de", current_.skip_errors);
         }
         if (de) {
             current_line_.push_back(rgb);
         } else if (rgb != 0) {
-            ++current_.rgb_when_de_low_errors;
-            ++total_errors_;
+            record_error("rgb_when_de_low", current_.rgb_when_de_low_errors);
         }
 
         prev_hs_ = hs;
@@ -326,12 +367,10 @@ private:
         if (current_.de_to_hs_gap_min == UINT64_MAX) current_.de_to_hs_gap_min = 0;
         if (current_.vs_to_first_de_lines == UINT64_MAX) current_.vs_to_first_de_lines = 0;
         if (expected_width_ && current_.active_width != expected_width_) {
-            ++current_.de_errors;
-            ++total_errors_;
+            record_error("active_width_mismatch", current_.de_errors);
         }
         if (expected_height_ && current_.active_height != expected_height_) {
-            ++current_.de_errors;
-            ++total_errors_;
+            record_error("active_height_mismatch", current_.de_errors);
         }
         compute_content_metrics();
         ++frames_completed_;
@@ -344,11 +383,23 @@ private:
         return meta.de_errors + meta.rgb_when_de_low_errors + meta.pulse_width_errors + meta.skip_errors;
     }
 
+    void record_error(const std::string& code, uint64_t& counter) {
+        ++counter;
+        ++total_errors_;
+        if (!first_error_seen_) {
+            first_error_seen_ = true;
+            first_error_cycle_ = current_cycle_;
+            first_error_frame_ = current_.frame;
+            first_error_pixel_ = pixel_in_frame_;
+            first_error_code_ = code;
+        }
+    }
+
     void compute_content_metrics() {
         std::vector<uint32_t> pixels;
         pixels.reserve(current_.active_width * current_.active_height);
         std::unordered_set<uint32_t> colors;
-        uint64_t hash = 1469598103934665603ull;
+        uint64_t hash = kFnv1a64OffsetBasis;
         uint64_t nonzero = 0;
         for (const auto& line : current_lines_) {
             for (size_t x = 0; x < current_.active_width; ++x) {
@@ -357,11 +408,11 @@ private:
                 colors.insert(rgb);
                 if (rgb != 0) ++nonzero;
                 hash ^= rgb & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
                 hash ^= (rgb >> 8) & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
                 hash ^= (rgb >> 16) & 0xFFu;
-                hash *= 1099511628211ull;
+                hash *= kFnv1a64Prime;
             }
         }
         uint64_t changed = 0;
@@ -450,6 +501,12 @@ private:
     uint64_t last_hs_rise_pixel_ = 0;
     uint64_t last_de_fall_pixel_ = 0;
     uint64_t total_errors_ = 0;
+    uint64_t current_cycle_ = 0;
+    bool first_error_seen_ = false;
+    uint64_t first_error_cycle_ = 0;
+    uint64_t first_error_frame_ = 0;
+    uint64_t first_error_pixel_ = 0;
+    std::string first_error_code_;
     uint64_t changed_frames_ = 0;
     uint64_t max_changed_pixels_from_previous_ = 0;
     bool have_hs_seen_ = false;

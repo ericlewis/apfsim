@@ -182,7 +182,43 @@ def test_shim_catalog_lists_public_catalog():
     assert r.returncode == 0, r.stdout + r.stderr
     doc = json.loads(r.stdout)
     assert doc["schema"] == "apfsim.shim_catalog.v1"
-    assert doc["entries"] == []
+    names = {entry["name"] for entry in doc["entries"]}
+    assert "intel_bram_shims" in names
+    assert "sdram_ideal_transactional" in names
+    assert "external_sram_pin_model" in names
+    sram = next(entry for entry in doc["entries"] if entry["name"] == "external_sram_pin_model")
+    assert sram["kind"] == "behavioral_model_library"
+    assert "sram" in sram["memory_classes"]
+
+
+def test_shim_catalog_profile_expands_runtime_cwd_and_verilator_flags(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({
+        "schema": "apfsim.shim_catalog.v1",
+        "entries": [
+            {
+                "name": "runtime_assets",
+                "verilator_flags": ["-Wno-BLKANDNBLK"],
+                "runtime_cwd": "{root}/hdl",
+            }
+        ],
+    }))
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({
+        "name": "profile",
+        "root": str(tmp_path),
+        "top": "core_top",
+        "filelist": "filelist.f",
+        "scenario": "scenario.yml",
+        "shim_catalog": ["runtime_assets"],
+    }))
+
+    r = run_cli("shim-catalog", "--profile", str(profile), "--catalog", str(catalog), "--json")
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = json.loads(r.stdout)
+    assert doc["runtime_cwd"] == str(tmp_path / "hdl")
+    assert "-Wno-BLKANDNBLK" in doc["verilator_flags"]
 
 
 def test_apply_video_shape_patches_scaler_modes_and_hints(tmp_path):
@@ -299,3 +335,28 @@ def test_mock_profile_run_writes_structured_artifacts(tmp_path):
     bridge_log = (artifacts / "bridge.log").read_text()
     assert "HOST CM Request Status" in bridge_log
     assert "DATASLOT load done id=1" in bridge_log
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_mock_profile_reports_frame_change_after_input(tmp_path):
+    artifacts = tmp_path / "input-response"
+    r = run_cli(
+        "run",
+        "--profile", "mock",
+        "--scenario", "scenarios/input_response_smoke.yml",
+        "--artifacts", str(artifacts),
+        timeout=180,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["input_video_effect_seen"] is True
+    assert result["input_video_response"]["changed"] is True
+    assert result["input_video_response"]["changed_frames"] >= 1
+    assert result["input_audio_effect_seen"] is True
+    assert result["input_audio_response"]["active"] is True
+    assert result["input_audio_response"]["samples"] >= 1
+    assert result["input_audio_response"]["nonzero_samples"] >= 1
+    phases = {phase["name"]: phase for phase in result["video_activity"]["phases"]}
+    assert phases["gameplay"]["pass"] is True
+    assert phases["gameplay"]["changed"] is True

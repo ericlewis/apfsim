@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/video_activity.schema.json",
+  "title": "apfsim video activity report",
+  "type": "object",
+  "required": ["schema", "input_response", "phases"],
+  "properties": {
+    "schema": { "const": "apfsim.video_activity.v1" },
+    "input_response": { "$ref": "#/$defs/phase" },
+    "phases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/phase" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["schema", "name", "available", "start_frame", "end_frame", "frames_considered", "changed_frames", "max_changed_pixels", "required", "changed", "pass"],
+      "properties": {
+        "schema": { "const": "apfsim.video_activity_phase.v1" },
+        "name": { "type": "string" },
+        "start_reason": { "type": "string" },
+        "available": { "type": "boolean" },
+        "start_frame": { "type": "integer", "minimum": 0 },
+        "end_frame": { "type": "integer", "minimum": 0 },
+        "frames_considered": { "type": "integer", "minimum": 0 },
+        "changed_frames": { "type": "integer", "minimum": 0 },
+        "max_changed_pixels": { "type": "integer", "minimum": 0 },
+        "first_changed_frame": { "type": "integer", "minimum": 0 },
+        "required": { "type": "boolean" },
+        "require_changed": { "type": "boolean" },
+        "min_changed_frames": { "type": "integer", "minimum": 0 },
+        "min_changed_pixels": { "type": "integer", "minimum": 0 },
+        "changed": { "type": "boolean" },
+        "pass": { "type": "boolean" },
+        "input_event_index": { "type": "integer", "minimum": 0 },
+        "input_event_frame": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

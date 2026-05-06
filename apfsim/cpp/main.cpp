@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -145,17 +146,69 @@ static std::string json_escape(const std::string& text) {
     return out;
 }
 
-static void write_failure_result(const fs::path& path, const std::string& phase, const std::string& message) {
+static std::string slot_file_status(const DataSlot& slot) {
+    if (slot.file.empty()) return "unspecified";
+    return std::filesystem::exists(slot.file) ? "exists" : "missing";
+}
+
+static std::string slot_load_status_for_artifact(const DataSlot& slot) {
+    if (!slot.load_status.empty()) return slot.load_status;
+    if (slot.deferload) return "deferload";
+    if (!slot.has_address) return "no_address";
+    if (slot.file.empty()) return slot.required ? "required_file_unspecified" : "no_file";
+    if (!std::filesystem::exists(slot.file)) return slot.required ? "required_file_missing" : "optional_file_missing";
+    if (slot.loaded_size > 0) return "loaded";
+    return "not_loaded";
+}
+
+static void write_failure_slots(std::ostream& out, const std::vector<DataSlot>& slots, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    for (size_t i = 0; i < slots.size(); ++i) {
+        const auto& slot = slots[i];
+        out << pad << "{ \"id\": " << slot.id
+            << ", \"name\": \"" << json_escape(slot.name)
+            << "\", \"path\": \"" << json_escape(slot.file.string())
+            << "\", \"address\": \"" << hex32(slot.address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"required\": " << (slot.required ? "true" : "false")
+            << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
+            << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"file_status\": \"" << json_escape(slot_file_status(slot))
+            << "\", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot_load_status_for_artifact(slot))
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
+            << "\", \"loaded_size\": " << slot.loaded_size
+            << ", \"loaded_bytes\": " << slot.loaded_size
+            << ", \"loaded_words\": " << slot.loaded_words
+            << ", \"crc\": \"" << hex32(slot.loaded_crc32)
+            << "\", \"checksum_fnv1a64\": \"" << hex64(slot.loaded_checksum) << "\" }";
+        out << (i + 1 == slots.size() ? "\n" : ",\n");
+    }
+}
+
+static void write_failure_result(
+    const fs::path& path,
+    const std::string& phase,
+    const std::string& message,
+    const Scenario* scenario = nullptr) {
     if (path.empty()) return;
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
     std::ofstream out(path);
     if (!out) return;
+    const std::vector<DataSlot> empty_slots;
+    const auto& slots = scenario ? scenario->slots : empty_slots;
     out << "{\n";
     out << "  \"ok\": false,\n";
     out << "  \"status\": \"failed\",\n";
     out << "  \"artifact_dir\": \"" << json_escape(path.parent_path().string()) << "\",\n";
     out << "  \"failed_phase\": \"" << json_escape(phase) << "\",\n";
     out << "  \"message\": \"" << json_escape(message) << "\",\n";
+    out << "  \"data\": { \"slots\": [\n";
+    write_failure_slots(out, slots, 4);
+    out << "  ] },\n";
+    out << "  \"data_load\": { \"done_seen\": false, \"total_loaded_bytes\": " << host_loaded_bytes(slots) << ", \"slots\": [\n";
+    write_failure_slots(out, slots, 4);
+    out << "  ] },\n";
     out << "  \"phases\": {\n";
     out << "    \"boot\": { \"ok\": false },\n";
     out << "    \"reset\": { \"ok\": false },\n";
@@ -174,6 +227,427 @@ struct ReadbackObservation {
     uint32_t observed = 0;
     bool ok = false;
 };
+
+struct MemoryCounterObservation {
+    std::string name;
+    std::string class_name;
+    uint64_t value = 0;
+    bool error = false;
+    std::string error_code;
+};
+
+struct MemoryActivitySnapshot {
+    bool observed = false;
+    std::vector<MemoryCounterObservation> counters;
+};
+
+struct VideoActivityPhaseReport {
+    std::string name;
+    std::string start_reason;
+    uint64_t start_frame = 0;
+    uint64_t end_frame = 0;
+    uint64_t frames_considered = 0;
+    uint64_t changed_frames = 0;
+    uint64_t max_changed_pixels = 0;
+    uint64_t first_changed_frame = 0;
+    uint64_t min_changed_frames = 0;
+    uint64_t min_changed_pixels = 0;
+    uint64_t input_event_index = 0;
+    uint64_t input_event_frame = 0;
+    bool available = true;
+    bool required = false;
+    bool changed = false;
+    bool pass = true;
+};
+
+struct AudioFrameMarker {
+    uint64_t frame = 0;
+    size_t sample_count = 0;
+};
+
+using AudioFrameMarkers = std::vector<AudioFrameMarker>;
+
+struct AudioActivityReport {
+    std::string name;
+    std::string start_reason;
+    uint64_t start_frame = 0;
+    uint64_t end_frame = 0;
+    uint64_t input_event_index = 0;
+    uint64_t input_event_frame = 0;
+    size_t start_sample = 0;
+    size_t end_sample = 0;
+    size_t samples = 0;
+    size_t nonzero_samples = 0;
+    int32_t peak = 0;
+    int32_t peak_to_peak_l = 0;
+    int32_t peak_to_peak_r = 0;
+    size_t clipped_samples = 0;
+    size_t min_samples = 0;
+    size_t min_nonzero_samples = 0;
+    int32_t min_peak = 0;
+    std::string activity = "unavailable";
+    bool available = true;
+    bool required = false;
+    bool active = false;
+    bool pass = true;
+};
+
+static constexpr size_t kNoInputEvent = std::numeric_limits<size_t>::max();
+
+static size_t first_delivered_input_event_index(const Scenario& scenario, const InputDriver& inputs) {
+    size_t first = kNoInputEvent;
+    uint64_t first_frame = 0;
+    for (size_t i = 0; i < scenario.inputs.size(); ++i) {
+        if (!inputs.event_delivered(i)) continue;
+        const auto frame = scenario.inputs[i].frame;
+        if (first == kNoInputEvent || frame < first_frame) {
+            first = i;
+            first_frame = frame;
+        }
+    }
+    return first;
+}
+
+static uint64_t phase_end_frame(uint64_t start_frame, uint64_t configured_end_frame, uint64_t duration_frames) {
+    if (start_frame == 0) return 0;
+    if (duration_frames > 0) return start_frame + duration_frames - 1;
+    return configured_end_frame;
+}
+
+static VideoActivityPhaseReport make_video_activity_report(
+    const std::string& name,
+    const std::string& start_reason,
+    uint64_t start_frame,
+    uint64_t end_frame,
+    bool required,
+    uint64_t min_changed_frames,
+    uint64_t min_changed_pixels,
+    const VideoCapture& video,
+    bool available = true,
+    uint64_t input_event_index = 0,
+    uint64_t input_event_frame = 0) {
+    VideoActivityPhaseReport report;
+    report.name = name;
+    report.start_reason = start_reason;
+    report.start_frame = start_frame;
+    report.end_frame = end_frame;
+    report.required = required;
+    report.min_changed_frames = min_changed_frames;
+    report.min_changed_pixels = min_changed_pixels;
+    report.available = available;
+    report.input_event_index = input_event_index;
+    report.input_event_frame = input_event_frame;
+    if (available && start_frame > 0) {
+        report.frames_considered = video.frames_in_range(start_frame, end_frame);
+        report.changed_frames = video.changed_frames_in_range(start_frame, end_frame, min_changed_pixels);
+        report.max_changed_pixels = video.max_changed_pixels_in_range(start_frame, end_frame);
+        report.first_changed_frame = video.first_changed_frame_in_range(start_frame, end_frame, min_changed_pixels);
+        report.changed = report.changed_frames >= min_changed_frames && report.max_changed_pixels >= min_changed_pixels;
+    }
+    report.pass = !required || (report.available && report.changed);
+    return report;
+}
+
+static VideoActivityPhaseReport make_input_response_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video) {
+    const auto event_index = first_delivered_input_event_index(scenario, inputs);
+    if (event_index == kNoInputEvent) {
+        return make_video_activity_report(
+            "after_input",
+            "first_delivered_input",
+            0,
+            0,
+            scenario.video_expect.require_change_after_input,
+            scenario.video_expect.min_changed_frames_after_input,
+            scenario.video_expect.min_changed_pixels_after_input,
+            video,
+            false);
+    }
+    const uint64_t event_frame = scenario.inputs[event_index].frame;
+    const uint64_t start = event_frame + scenario.video_expect.input_response_delay_frames;
+    const uint64_t end = phase_end_frame(start, 0, scenario.video_expect.input_response_window_frames);
+    return make_video_activity_report(
+        "after_input",
+        "first_delivered_input",
+        start,
+        end,
+        scenario.video_expect.require_change_after_input,
+        scenario.video_expect.min_changed_frames_after_input,
+        scenario.video_expect.min_changed_pixels_after_input,
+        video,
+        true,
+        event_index,
+        event_frame);
+}
+
+static VideoActivityPhaseReport make_named_phase_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video,
+    const VideoPhaseExpect& phase) {
+    uint64_t start = phase.start_frame;
+    uint64_t input_event_frame = 0;
+    size_t input_event_index = kNoInputEvent;
+    std::string reason = phase.after_input ? "input_event" : "configured_frame";
+    bool available = true;
+    if (phase.after_input) {
+        if (phase.has_input_event_index) {
+            const size_t requested = static_cast<size_t>(phase.input_event_index);
+            if (requested < scenario.inputs.size() && inputs.event_delivered(requested)) input_event_index = requested;
+        } else {
+            input_event_index = first_delivered_input_event_index(scenario, inputs);
+        }
+        if (input_event_index == kNoInputEvent) {
+            available = false;
+            start = 0;
+        } else {
+            input_event_frame = scenario.inputs[input_event_index].frame;
+            start = input_event_frame + phase.input_delay_frames;
+        }
+    }
+    const uint64_t end = phase_end_frame(start, phase.end_frame, phase.duration_frames);
+    return make_video_activity_report(
+        phase.name.empty() ? "phase" : phase.name,
+        reason,
+        start,
+        end,
+        phase.require_changed,
+        phase.min_changed_frames,
+        phase.min_changed_pixels,
+        video,
+        available,
+        input_event_index == kNoInputEvent ? 0 : static_cast<uint64_t>(input_event_index),
+        input_event_frame);
+}
+
+static std::vector<VideoActivityPhaseReport> make_named_phase_reports(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const VideoCapture& video) {
+    std::vector<VideoActivityPhaseReport> reports;
+    reports.reserve(scenario.video_phases.size());
+    for (const auto& phase : scenario.video_phases) {
+        reports.push_back(make_named_phase_report(scenario, inputs, video, phase));
+    }
+    return reports;
+}
+
+static void write_video_activity_phase(std::ostream& out, const VideoActivityPhaseReport& report, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{ \"schema\": \"apfsim.video_activity_phase.v1\""
+        << ", \"name\": \"" << json_escape(report.name)
+        << "\", \"start_reason\": \"" << json_escape(report.start_reason)
+        << "\", \"available\": " << (report.available ? "true" : "false")
+        << ", \"start_frame\": " << report.start_frame
+        << ", \"end_frame\": " << report.end_frame
+        << ", \"frames_considered\": " << report.frames_considered
+        << ", \"changed_frames\": " << report.changed_frames
+        << ", \"max_changed_pixels\": " << report.max_changed_pixels
+        << ", \"first_changed_frame\": " << report.first_changed_frame
+        << ", \"required\": " << (report.required ? "true" : "false")
+        << ", \"require_changed\": " << (report.required ? "true" : "false")
+        << ", \"min_changed_frames\": " << report.min_changed_frames
+        << ", \"min_changed_pixels\": " << report.min_changed_pixels
+        << ", \"changed\": " << (report.changed ? "true" : "false")
+        << ", \"pass\": " << (report.pass ? "true" : "false")
+        << ", \"input_event_index\": " << report.input_event_index
+        << ", \"input_event_frame\": " << report.input_event_frame
+        << " }";
+}
+
+static void record_audio_frame_marker(AudioFrameMarkers& markers, uint64_t frame, const AudioCapture& audio) {
+    if (!markers.empty() && markers.back().frame == frame) {
+        markers.back().sample_count = audio.sample_count();
+        return;
+    }
+    markers.push_back({frame, audio.sample_count()});
+}
+
+static bool audio_sample_range_for_frames(
+    const AudioFrameMarkers& markers,
+    uint64_t start_frame,
+    uint64_t end_frame,
+    const AudioCapture& audio,
+    size_t& start_sample,
+    size_t& end_sample) {
+    if (start_frame == 0 || markers.empty()) return false;
+    const auto start_it = std::lower_bound(
+        markers.begin(), markers.end(), start_frame,
+        [](const AudioFrameMarker& marker, uint64_t frame) { return marker.frame < frame; });
+    if (start_it == markers.end()) return false;
+    start_sample = start_it->sample_count;
+    if (end_frame == 0) {
+        end_sample = audio.sample_count();
+        return true;
+    }
+    const auto end_it = std::upper_bound(
+        markers.begin(), markers.end(), end_frame,
+        [](uint64_t frame, const AudioFrameMarker& marker) { return frame < marker.frame; });
+    end_sample = end_it == markers.end() ? audio.sample_count() : end_it->sample_count;
+    if (end_sample < start_sample) end_sample = start_sample;
+    return true;
+}
+
+static AudioActivityReport make_input_audio_response_report(
+    const Scenario& scenario,
+    const InputDriver& inputs,
+    const AudioCapture& audio,
+    const AudioFrameMarkers& markers) {
+    AudioActivityReport report;
+    report.name = "after_input";
+    report.start_reason = "first_delivered_input";
+    report.required = scenario.audio_expect.require_activity_after_input;
+    report.min_samples = scenario.audio_expect.min_samples_after_input;
+    report.min_nonzero_samples = scenario.audio_expect.min_nonzero_samples_after_input;
+    report.min_peak = scenario.audio_expect.min_peak_after_input;
+
+    const auto event_index = first_delivered_input_event_index(scenario, inputs);
+    if (event_index == kNoInputEvent) {
+        report.available = false;
+        report.pass = !report.required;
+        return report;
+    }
+
+    report.input_event_index = static_cast<uint64_t>(event_index);
+    report.input_event_frame = scenario.inputs[event_index].frame;
+    report.start_frame = report.input_event_frame + scenario.audio_expect.input_response_delay_frames;
+    report.end_frame = phase_end_frame(report.start_frame, 0, scenario.audio_expect.input_response_window_frames);
+    report.available = audio_sample_range_for_frames(markers, report.start_frame, report.end_frame, audio, report.start_sample, report.end_sample);
+    if (report.available) {
+        const auto stats = audio.stats_for_sample_range(report.start_sample, report.end_sample);
+        report.samples = stats.samples;
+        report.nonzero_samples = stats.nonzero_samples;
+        report.peak = stats.peak;
+        report.peak_to_peak_l = stats.peak_to_peak_l;
+        report.peak_to_peak_r = stats.peak_to_peak_r;
+        report.clipped_samples = stats.clipped_samples;
+        report.activity = stats.activity;
+        report.active = report.samples >= report.min_samples &&
+                        report.nonzero_samples >= report.min_nonzero_samples &&
+                        report.peak >= report.min_peak &&
+                        report.activity != "stuck_sample";
+    }
+    report.pass = !report.required || (report.available && report.active);
+    return report;
+}
+
+static void write_audio_activity_phase(std::ostream& out, const AudioActivityReport& report, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{ \"schema\": \"apfsim.audio_activity_phase.v1\""
+        << ", \"name\": \"" << json_escape(report.name)
+        << "\", \"start_reason\": \"" << json_escape(report.start_reason)
+        << "\", \"available\": " << (report.available ? "true" : "false")
+        << ", \"start_frame\": " << report.start_frame
+        << ", \"end_frame\": " << report.end_frame
+        << ", \"start_sample\": " << report.start_sample
+        << ", \"end_sample\": " << report.end_sample
+        << ", \"samples\": " << report.samples
+        << ", \"nonzero_samples\": " << report.nonzero_samples
+        << ", \"peak\": " << report.peak
+        << ", \"peak_to_peak_l\": " << report.peak_to_peak_l
+        << ", \"peak_to_peak_r\": " << report.peak_to_peak_r
+        << ", \"clipped_samples\": " << report.clipped_samples
+        << ", \"activity\": \"" << json_escape(report.activity)
+        << "\", \"required\": " << (report.required ? "true" : "false")
+        << ", \"require_activity\": " << (report.required ? "true" : "false")
+        << ", \"min_samples\": " << report.min_samples
+        << ", \"min_nonzero_samples\": " << report.min_nonzero_samples
+        << ", \"min_peak\": " << report.min_peak
+        << ", \"active\": " << (report.active ? "true" : "false")
+        << ", \"pass\": " << (report.pass ? "true" : "false")
+        << ", \"input_event_index\": " << report.input_event_index
+        << ", \"input_event_frame\": " << report.input_event_frame
+        << " }";
+}
+
+template <typename Top>
+static MemoryActivitySnapshot capture_memory_activity(Top* top) {
+    MemoryActivitySnapshot snapshot;
+    (void)top;
+#if APFSIM_MEMORY_COUNTER_SRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"sram_read_count", "sram", static_cast<uint64_t>(top->apfsim_sram_read_count), false, ""});
+    snapshot.counters.push_back({"sram_write_count", "sram", static_cast<uint64_t>(top->apfsim_sram_write_count), false, ""});
+    snapshot.counters.push_back({"sram_bus_contention_error", "sram", static_cast<uint64_t>(top->apfsim_sram_bus_contention_error), top->apfsim_sram_bus_contention_error != 0, "SRAM_BUS_CONTENTION"});
+    snapshot.counters.push_back({"sram_byte_enable_error", "sram", static_cast<uint64_t>(top->apfsim_sram_byte_enable_error), top->apfsim_sram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+#if APFSIM_MEMORY_COUNTER_PSRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"psram_read_count", "psram", static_cast<uint64_t>(top->apfsim_psram_read_count), false, ""});
+    snapshot.counters.push_back({"psram_write_count", "psram", static_cast<uint64_t>(top->apfsim_psram_write_count), false, ""});
+    snapshot.counters.push_back({"psram_overrun_error", "psram", static_cast<uint64_t>(top->apfsim_psram_overrun_error), top->apfsim_psram_overrun_error != 0, "MEMORY_STALL_TIMEOUT"});
+    snapshot.counters.push_back({"psram_byte_enable_error", "psram", static_cast<uint64_t>(top->apfsim_psram_byte_enable_error), top->apfsim_psram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+#if APFSIM_MEMORY_COUNTER_CRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"cram_read_count", "cram", static_cast<uint64_t>(top->apfsim_cram_read_count), false, ""});
+    snapshot.counters.push_back({"cram_write_count", "cram", static_cast<uint64_t>(top->apfsim_cram_write_count), false, ""});
+    snapshot.counters.push_back({"cram_overrun_error", "cram", static_cast<uint64_t>(top->apfsim_cram_overrun_error), top->apfsim_cram_overrun_error != 0, "MEMORY_STALL_TIMEOUT"});
+    snapshot.counters.push_back({"cram_byte_enable_error", "cram", static_cast<uint64_t>(top->apfsim_cram_byte_enable_error), top->apfsim_cram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+#endif
+#if APFSIM_MEMORY_COUNTER_SDRAM
+    snapshot.observed = true;
+    snapshot.counters.push_back({"sdram_read_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_read_count), false, ""});
+    snapshot.counters.push_back({"sdram_write_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_write_count), false, ""});
+    snapshot.counters.push_back({"sdram_activate_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_activate_count), false, ""});
+    snapshot.counters.push_back({"sdram_refresh_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_refresh_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_preload_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_preload_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_coverage_gap_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_coverage_gap_count), false, ""});
+    snapshot.counters.push_back({"sdram_rom_mismatch_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_mismatch_count), top->apfsim_sdram_rom_mismatch_count != 0, "MEMORY_ROM_WRITE_MISMATCH"});
+    snapshot.counters.push_back({"sdram_rom_unwritten_read_count", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_unwritten_read_count), top->apfsim_sdram_rom_unwritten_read_count != 0, "MEMORY_UNINITIALIZED_READ"});
+    snapshot.counters.push_back({"sdram_first_coverage_gap_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_coverage_gap_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_read_addr", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_read_addr), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_expected", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_expected), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_actual", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_actual), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_mismatch_dqm", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_mismatch_dqm), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_expected", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_expected), false, ""});
+    snapshot.counters.push_back({"sdram_first_rom_unwritten_dqm", "sdram", static_cast<uint64_t>(top->apfsim_sdram_first_rom_unwritten_dqm), false, ""});
+    snapshot.counters.push_back({"sdram_command_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_command_error), top->apfsim_sdram_command_error != 0, "SDRAM_COMMAND_ERROR"});
+    snapshot.counters.push_back({"sdram_bus_contention_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_bus_contention_error), top->apfsim_sdram_bus_contention_error != 0, "MEMORY_BUS_CONTENTION"});
+    snapshot.counters.push_back({"sdram_byte_enable_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_byte_enable_error), top->apfsim_sdram_byte_enable_error != 0, "MEMORY_BYTE_ENABLE_MISMATCH"});
+    snapshot.counters.push_back({"sdram_rom_mismatch_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_rom_mismatch_error), false, ""});
+    snapshot.counters.push_back({"sdram_uninitialized_read_error", "sdram", static_cast<uint64_t>(top->apfsim_sdram_uninitialized_read_error), false, ""});
+#endif
+    return snapshot;
+}
+
+static void write_memory_activity_object(std::ostream& out, const MemoryActivitySnapshot& memory, int indent) {
+    const std::string pad(static_cast<size_t>(indent), ' ');
+    out << pad << "{\n";
+    out << pad << "  \"schema\": \"apfsim.memory_activity.runtime.v1\",\n";
+    out << pad << "  \"observed\": " << (memory.observed ? "true" : "false") << ",\n";
+    out << pad << "  \"counter_status\": \"" << (memory.observed ? "observed" : "none") << "\",\n";
+    out << pad << "  \"counters\": [\n";
+    for (size_t i = 0; i < memory.counters.size(); ++i) {
+        const auto& counter = memory.counters[i];
+        out << pad << "    { \"name\": \"" << json_escape(counter.name)
+            << "\", \"class\": \"" << json_escape(counter.class_name)
+            << "\", \"value\": " << counter.value
+            << ", \"error\": " << (counter.error ? "true" : "false");
+        if (!counter.error_code.empty()) out << ", \"error_code\": \"" << json_escape(counter.error_code) << "\"";
+        out << " }";
+        out << (i + 1 == memory.counters.size() ? "\n" : ",\n");
+    }
+    out << pad << "  ],\n";
+    out << pad << "  \"errors\": [\n";
+    bool wrote_error = false;
+    for (const auto& counter : memory.counters) {
+        if (!counter.error) continue;
+        if (wrote_error) out << ",\n";
+        out << pad << "    { \"code\": \"" << json_escape(counter.error_code)
+            << "\", \"severity\": \"error\", \"counter\": \"" << json_escape(counter.name)
+            << "\", \"class\": \"" << json_escape(counter.class_name)
+            << "\", \"value\": " << counter.value
+            << ", \"observed\": true }";
+        wrote_error = true;
+    }
+    if (wrote_error) out << "\n";
+    out << pad << "  ]\n";
+    out << pad << "}";
+}
 
 static std::string format_failure_summary(const Assertions& asserts) {
     std::ostringstream ss;
@@ -236,8 +710,18 @@ static void write_video_shape_object(std::ostream& out, const Scenario& scenario
     out << pad << "  \"stable_dimensions\": " << (stable_dimensions ? "true" : "false") << ",\n";
     out << pad << "  \"protocol_valid\": " << (protocol_valid ? "true" : "false") << ",\n";
     out << pad << "  \"frames_measured\": " << agg.frames << ",\n";
+    out << pad << "  \"frames_considered\": " << agg.frames << ",\n";
     out << pad << "  \"frames_completed\": " << video.frames_completed() << ",\n";
     out << pad << "  \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames << ",\n";
+    out << pad << "  \"startup_frames_ignored\": " << scenario.video_expect.ignore_startup_frames << ",\n";
+    out << pad << "  \"first_error_cycle\": " << video.first_error_cycle() << ",\n";
+    out << pad << "  \"first_error_frame\": " << video.first_error_frame() << ",\n";
+    out << pad << "  \"first_error_pixel\": " << video.first_error_pixel() << ",\n";
+    out << pad << "  \"first_error_code\": \"" << json_escape(video.first_error_code()) << "\",\n";
+    const uint64_t trace_start = video.first_error_cycle() > 2048 ? video.first_error_cycle() - 2048 : 0;
+    const uint64_t trace_end = video.first_error_cycle() ? video.first_error_cycle() + 2048 : 0;
+    out << pad << "  \"trace_window\": { \"start_cycle\": " << trace_start
+        << ", \"end_cycle\": " << trace_end << " },\n";
     out << pad << "  \"source_signals\": [\"video_rgb\", \"video_de\", \"video_hs\", \"video_vs\", \"video_skip\"]\n";
     out << pad << "}";
 }
@@ -376,14 +860,17 @@ static void write_result_json(
     const std::vector<DataSlot>& slots,
     const VideoCapture& video,
     const AudioCapture& audio,
+    const AudioFrameMarkers& audio_frame_markers,
     const InputDriver& inputs,
     const Bridge& bridge,
     const BootTrace& boot_trace,
     const std::vector<SaveReport>& save_reports,
     const std::vector<SavestateReport>& savestate_reports,
     const std::vector<ReadbackObservation>& readbacks,
+    const MemoryActivitySnapshot& memory_activity,
     const std::vector<std::string>& failures,
     size_t interact_writes,
+    bool interact_verify_readback,
     uint64_t cycles_74a) {
     if (path.empty()) return;
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
@@ -391,6 +878,9 @@ static void write_result_json(
     if (!out) return;
     const auto& meta = video.last_metadata();
     const auto video_agg = video.aggregate_after_startup_frames(scenario.video_expect.ignore_startup_frames);
+    const auto input_video_response = make_input_response_report(scenario, inputs, video);
+    const auto video_phase_reports = make_named_phase_reports(scenario, inputs, video);
+    const auto input_audio_response = make_input_audio_response_report(scenario, inputs, audio, audio_frame_markers);
     const auto& astats = audio.stats();
     const uint64_t validated_video_errors = video.errors_after_startup_frames(scenario.video_expect.ignore_startup_frames);
     const bool boot_ok = boot_trace.running_cycle != 0;
@@ -401,6 +891,7 @@ static void write_result_json(
     const bool interact_ok = phase_has_no_failure(failures, "interact:");
     const bool input_ok = phase_has_no_failure(failures, "input:");
     const bool save_ok = phase_has_no_failure(failures, "save:");
+    const uint64_t loaded_bytes_total = host_loaded_bytes(slots);
     out << "{\n";
     out << "  \"ok\": " << (ok ? "true" : "false") << ",\n";
     out << "  \"scenario\": \"" << json_escape(scenario.name) << "\",\n";
@@ -456,8 +947,12 @@ static void write_result_json(
         out << "    { \"id\": " << slot.id
             << ", \"name\": \"" << json_escape(slot.name)
             << "\", \"address\": \"" << hex32(slot.address)
-            << "\", \"loaded_last_address\": \"" << hex32(slot.loaded_last_address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"loaded_last_address\": \"" << hex32(slot.loaded_last_address)
             << "\", \"file\": \"" << json_escape(slot.file.string())
+            << "\", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot.load_status)
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
             << "\", \"loaded_size\": " << slot.loaded_size
             << ", \"loaded_words\": " << slot.loaded_words
             << ", \"observed_write_words\": " << slot.observed_write_words
@@ -465,12 +960,32 @@ static void write_result_json(
             << "\", \"observed_last_write_address\": \"" << hex32(slot.observed_last_write_address)
             << "\", \"observed_write_address_errors\": " << slot.observed_write_address_errors
             << ", \"loaded_checksum\": \"" << hex64(slot.loaded_checksum) << "\""
+            << ", \"loaded_crc32\": \"" << hex32(slot.loaded_crc32) << "\""
             << ", \"expected_checksum\": ";
         if (slot.has_expected_checksum) out << "\"" << hex64(slot.expected_checksum) << "\"";
         else out << "null";
         out
             << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
             << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"verify_readback\": " << (slot.verify_readback ? "true" : "false")
+            << ", \"readback_attempted\": " << (slot.readback_attempted ? "true" : "false")
+            << ", \"readback_matches\": ";
+        if (slot.readback_attempted) out << (slot.readback_matches ? "true" : "false");
+        else out << "null";
+        out << ", \"readback_bytes\": " << slot.readback_bytes
+            << ", \"readback_crc32\": \"" << hex32(slot.readback_crc32)
+            << "\", \"readback_checksum\": \"" << hex64(slot.readback_checksum)
+            << "\", \"readback_mismatch_count\": " << slot.readback_mismatch_count
+            << ", \"readback_first_mismatch_offset\": ";
+        if (slot.readback_has_first_mismatch) out << slot.readback_first_mismatch_offset;
+        else out << "null";
+        out << ", \"readback_expected_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_expected_byte);
+        else out << "null";
+        out << ", \"readback_observed_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_observed_byte);
+        else out << "null";
+        out
             << ", \"target_read_requests\": " << slot.target_read_requests
             << ", \"target_read_bytes\": " << slot.target_read_bytes
             << ", \"target_write_requests\": " << slot.target_write_requests
@@ -478,6 +993,52 @@ static void write_result_json(
             << ", \"target_flush_requests\": " << slot.target_flush_requests
             << ", \"target_filename_requests\": " << slot.target_filename_requests
             << ", \"target_open_requests\": " << slot.target_open_requests << " }";
+        out << (i + 1 == slots.size() ? "\n" : ",\n");
+    }
+    out << "  ] },\n";
+    out << "  \"data_load\": { \"done_seen\": " << (boot_trace.data_all_complete_cycle ? "true" : "false")
+        << ", \"done_cycle\": " << boot_trace.data_all_complete_cycle
+        << ", \"total_loaded_bytes\": " << loaded_bytes_total
+        << ", \"slots\": [\n";
+    for (size_t i = 0; i < slots.size(); ++i) {
+        const auto& slot = slots[i];
+        out << "    { \"id\": " << slot.id
+            << ", \"name\": \"" << json_escape(slot.name)
+            << "\", \"path\": \"" << json_escape(slot.file.string())
+            << "\", \"address\": \"" << hex32(slot.address)
+            << "\", \"has_address\": " << (slot.has_address ? "true" : "false")
+            << ", \"file_exists\": " << (!slot.file.empty() && std::filesystem::exists(slot.file) ? "true" : "false")
+            << ", \"load_status\": \"" << json_escape(slot.load_status)
+            << "\", \"load_error\": \"" << json_escape(slot.load_error)
+            << "\", \"loaded_bytes\": " << slot.loaded_size
+            << ", \"loaded_words\": " << slot.loaded_words
+            << ", \"crc\": \"" << hex32(slot.loaded_crc32)
+            << "\", \"checksum_fnv1a64\": \"" << hex64(slot.loaded_checksum)
+            << "\", \"required\": " << (slot.required ? "true" : "false")
+            << ", \"nonvolatile\": " << (slot.nonvolatile ? "true" : "false")
+            << ", \"deferload\": " << (slot.deferload ? "true" : "false")
+            << ", \"verify_readback\": " << (slot.verify_readback ? "true" : "false")
+            << ", \"readback_attempted\": " << (slot.readback_attempted ? "true" : "false")
+            << ", \"readback_matches\": ";
+        if (slot.readback_attempted) out << (slot.readback_matches ? "true" : "false");
+        else out << "null";
+        out << ", \"readback_bytes\": " << slot.readback_bytes
+            << ", \"readback_crc\": \"" << hex32(slot.readback_crc32)
+            << "\", \"readback_checksum_fnv1a64\": \"" << hex64(slot.readback_checksum)
+            << "\", \"readback_mismatch_count\": " << slot.readback_mismatch_count
+            << ", \"readback_first_mismatch_offset\": ";
+        if (slot.readback_has_first_mismatch) out << slot.readback_first_mismatch_offset;
+        else out << "null";
+        out << ", \"readback_expected_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_expected_byte);
+        else out << "null";
+        out << ", \"readback_observed_byte\": ";
+        if (slot.readback_has_first_mismatch) out << static_cast<uint32_t>(slot.readback_observed_byte);
+        else out << "null";
+        out
+            << ", \"observed_write_words\": " << slot.observed_write_words
+            << ", \"observed_write_address_errors\": " << slot.observed_write_address_errors
+            << ", \"done_seen\": " << ((slot.deferload || !slot.has_address || slot.file.empty() || slot.loaded_size > 0) ? "true" : "false") << " }";
         out << (i + 1 == slots.size() ? "\n" : ",\n");
     }
     out << "  ] },\n";
@@ -527,6 +1088,7 @@ static void write_result_json(
         << ", \"frames_completed\": " << video.frames_completed()
         << ", \"frames_started\": " << video.frames_started()
         << ", \"validated_frames\": " << video_agg.frames
+        << ", \"frames_considered\": " << video_agg.frames
         << ", \"active_width\": " << meta.active_width
         << ", \"active_width_frame_min\": " << video_agg.active_width_min
         << ", \"active_width_frame_max\": " << video_agg.active_width_max
@@ -555,15 +1117,45 @@ static void write_result_json(
         << ", \"changed_pixels_from_previous\": " << meta.changed_pixels_from_previous
         << ", \"changed_frames\": " << video.changed_frames()
         << ", \"max_changed_pixels_from_previous\": " << video.max_changed_pixels_from_previous()
+        << ", \"changed_after_input\": " << (input_video_response.changed ? "true" : "false")
+        << ", \"changed_frames_after_input\": " << input_video_response.changed_frames
+        << ", \"max_changed_pixels_after_input\": " << input_video_response.max_changed_pixels
         << ", \"frame_hash\": \"" << hex64(meta.frame_hash) << "\""
         << ", \"unstable_dimension_frames\": " << video_agg.unstable_dimension_frames
         << ", \"hs_under_active_height_frames\": " << video_agg.hs_under_active_height_frames
         << ", \"errors\": " << validated_video_errors
         << ", \"raw_errors\": " << video.errors()
-        << ", \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames << " },\n";
+        << ", \"ignored_startup_frames\": " << scenario.video_expect.ignore_startup_frames
+        << ", \"startup_frames_ignored\": " << scenario.video_expect.ignore_startup_frames << " },\n";
     out << "  \"video_shape\": ";
     write_video_shape_object(out, scenario, video, 2);
     out << ",\n";
+    const uint64_t video_trace_start = video.first_error_cycle() > 2048 ? video.first_error_cycle() - 2048 : 0;
+    const uint64_t video_trace_end = video.first_error_cycle() ? video.first_error_cycle() + 2048 : 0;
+    out << "  \"video_protocol\": { \"valid\": " << (video_agg.total_errors == 0 ? "true" : "false")
+        << ", \"first_error_cycle\": " << video.first_error_cycle()
+        << ", \"first_error_frame\": " << video.first_error_frame()
+        << ", \"first_error_pixel\": " << video.first_error_pixel()
+        << ", \"first_error_code\": \"" << json_escape(video.first_error_code())
+        << "\", \"trace_window\": { \"start_cycle\": " << video_trace_start
+        << ", \"end_cycle\": " << video_trace_end << " }"
+        << ", \"source_signals\": [\"video_rgb\", \"video_de\", \"video_hs\", \"video_vs\", \"video_skip\"] },\n";
+    out << "  \"input_video_response\": ";
+    write_video_activity_phase(out, input_video_response, 2);
+    out << ",\n";
+    out << "  \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false") << ",\n";
+    out << "  \"video_activity\": {\n";
+    out << "    \"schema\": \"apfsim.video_activity.v1\",\n";
+    out << "    \"input_response\": ";
+    write_video_activity_phase(out, input_video_response, 4);
+    out << ",\n";
+    out << "    \"phases\": [\n";
+    for (size_t i = 0; i < video_phase_reports.size(); ++i) {
+        write_video_activity_phase(out, video_phase_reports[i], 6);
+        out << (i + 1 == video_phase_reports.size() ? "\n" : ",\n");
+    }
+    out << "    ]\n";
+    out << "  },\n";
     out << "  \"audio\": { \"sample_rate\": " << astats.sample_rate
         << ", \"samples\": " << astats.samples
         << ", \"min_l\": " << astats.min_l
@@ -572,19 +1164,82 @@ static void write_result_json(
         << ", \"max_r\": " << astats.max_r
         << ", \"peak_to_peak_l\": " << astats.peak_to_peak_l
         << ", \"peak_to_peak_r\": " << astats.peak_to_peak_r
+        << ", \"peak\": " << astats.peak
+        << ", \"nonzero_samples\": " << astats.nonzero_samples
+        << ", \"activity\": \"" << json_escape(astats.activity) << "\""
         << ", \"dc_offset_l\": " << astats.dc_offset_l
         << ", \"dc_offset_r\": " << astats.dc_offset_r
         << ", \"clipped_samples\": " << astats.clipped_samples
         << ", \"mclk_edges\": " << astats.mclk_edges
         << ", \"lrck_edges\": " << astats.lrck_edges
+        << ", \"mclk_seen\": " << (astats.mclk_seen ? "true" : "false")
+        << ", \"lrclk_seen\": " << (astats.lrclk_seen ? "true" : "false")
+        << ", \"stuck_sample\": " << (astats.stuck_sample ? "true" : "false")
         << ", \"lrck_half_period_mclk_min\": " << astats.lrck_half_period_mclk_min
         << ", \"lrck_half_period_mclk_max\": " << astats.lrck_half_period_mclk_max
         << ", \"avg_mclk_per_lrck_half_period\": " << astats.avg_mclk_per_lrck_half_period
-        << ", \"estimated_mclk_lrck_ratio\": " << astats.estimated_mclk_lrck_ratio << " },\n";
-    out << "  \"interact\": { \"persistent_writes\": " << interact_writes << " },\n";
+        << ", \"estimated_mclk_lrck_ratio\": " << astats.estimated_mclk_lrck_ratio
+        << ", \"active_after_input\": " << (input_audio_response.active ? "true" : "false")
+        << ", \"samples_after_input\": " << input_audio_response.samples
+        << ", \"nonzero_samples_after_input\": " << input_audio_response.nonzero_samples
+        << ", \"peak_after_input\": " << input_audio_response.peak << " },\n";
+    out << "  \"input_audio_response\": ";
+    write_audio_activity_phase(out, input_audio_response, 2);
+    out << ",\n";
+    out << "  \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false") << ",\n";
+    out << "  \"audio_activity\": {\n";
+    out << "    \"schema\": \"apfsim.audio_activity.v1\",\n";
+    out << "    \"input_response\": ";
+    write_audio_activity_phase(out, input_audio_response, 4);
+    out << "\n";
+    out << "  },\n";
+    const bool interact_verified = interact_verify_readback && interact_writes > 0 && interact_ok;
+    const bool reset_action_seen = boot_trace.reset_enter_cycle != 0 && boot_trace.reset_exit_cycle != 0;
+    out << "  \"interact\": { \"persistent_writes\": " << interact_writes
+        << ", \"readback_enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"readback_verified\": " << (interact_verified ? "true" : "false") << " },\n";
+    out << "  \"interact_readback\": { \"enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"verified\": " << (interact_verified ? "true" : "false")
+        << ", \"persistent_writes\": " << interact_writes << " },\n";
+    out << "  \"reset_action_seen\": " << (reset_action_seen ? "true" : "false") << ",\n";
+    out << "  \"control_plane\": { \"interact_readback\": { \"enabled\": " << (interact_verify_readback ? "true" : "false")
+        << ", \"verified\": " << (interact_verified ? "true" : "false")
+        << ", \"persistent_writes\": " << interact_writes << " }, \"reset_action_seen\": "
+        << (reset_action_seen ? "true" : "false") << " },\n";
     out << "  \"input\": { \"scripted_events\": " << scenario.inputs.size()
         << ", \"delivered_events\": " << inputs.delivered_event_count()
-        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false") << " },\n";
+        << ", \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false")
+        << ", \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false")
+        << ", \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false")
+        << ", \"ever_active\": " << (inputs.ever_active() ? "true" : "false")
+        << ", \"key_state\": { \"cont1_key\": \"" << hex32(inputs.key_state(1))
+        << "\", \"cont2_key\": \"" << hex32(inputs.key_state(2))
+        << "\", \"cont3_key\": \"" << hex32(inputs.key_state(3))
+        << "\", \"cont4_key\": \"" << hex32(inputs.key_state(4)) << "\" }, \"input_trace\": [\n";
+    for (size_t i = 0; i < inputs.events().size(); ++i) {
+        const auto& event = inputs.events()[i];
+        out << "    { \"frame\": " << event.frame
+            << ", \"player\": " << event.player
+            << ", \"button\": \"" << button_name(event.button)
+            << "\", \"hold_frames\": " << event.hold_frames
+            << ", \"delivered\": " << (inputs.event_delivered(i) ? "true" : "false") << " }";
+        out << (i + 1 == inputs.events().size() ? "\n" : ",\n");
+    }
+    out << "  ] },\n";
+    out << "  \"input_trace\": [\n";
+    for (size_t i = 0; i < inputs.events().size(); ++i) {
+        const auto& event = inputs.events()[i];
+        out << "    { \"frame\": " << event.frame
+            << ", \"player\": " << event.player
+            << ", \"button\": \"" << button_name(event.button)
+            << "\", \"hold_frames\": " << event.hold_frames
+            << ", \"delivered\": " << (inputs.event_delivered(i) ? "true" : "false") << " }";
+        out << (i + 1 == inputs.events().size() ? "\n" : ",\n");
+    }
+    out << "  ],\n";
+    out << "  \"input_effect_seen\": " << ((inputs.ever_active() && inputs.delivered_event_count() > 0) ? "true" : "false") << ",\n";
+    out << "  \"input_video_effect_seen\": " << (input_video_response.changed ? "true" : "false") << ",\n";
+    out << "  \"input_audio_effect_seen\": " << (input_audio_response.active ? "true" : "false") << ",\n";
     out << "  \"save\": { \"reports\": [\n";
     for (size_t i = 0; i < save_reports.size(); ++i) {
         const auto& report = save_reports[i];
@@ -616,6 +1271,9 @@ static void write_result_json(
         out << (i + 1 == savestate_reports.size() ? "\n" : ",\n");
     }
     out << "  ] },\n";
+    out << "  \"memory_activity\": ";
+    write_memory_activity_object(out, memory_activity, 2);
+    out << ",\n";
     out << "  \"host_commands\": [\n";
     for (size_t i = 0; i < scenario.host_commands.size(); ++i) {
         const auto& event = scenario.host_commands[i];
@@ -747,7 +1405,7 @@ public:
         top_->clk_74b = clk_;
         inputs_->drive(top_);
         top_->eval();
-        video_->sample(top_);
+        video_->sample(top_, time_.cycles_74a);
         audio_->sample(top_);
 #if VM_TRACE
         if (trace_) trace_->dump(context_->time());
@@ -930,10 +1588,14 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
             *existing = slot;
             if (!override.name.empty()) existing->name = override.name;
             if (!override.file.empty()) existing->file = override.file;
-            if (override.address != 0) existing->address = override.address;
+            if (override.has_address) {
+                existing->address = override.address;
+                existing->has_address = true;
+            }
             existing->required = existing->required || override.required;
             existing->nonvolatile = existing->nonvolatile || override.nonvolatile;
             existing->deferload = existing->deferload || override.deferload;
+            existing->verify_readback = existing->verify_readback || override.verify_readback;
             if (override.size_exact) existing->size_exact = override.size_exact;
             if (override.size_maximum) existing->size_maximum = override.size_maximum;
             if (override.has_expected_checksum) {
@@ -946,13 +1608,14 @@ static void merge_slots(std::vector<DataSlot>& base, const std::vector<DataSlot>
     }
 }
 
-static uint64_t total_loaded_bytes(const std::vector<DataSlot>& slots) {
-    uint64_t total = 0;
-    for (const auto& slot : slots) total += slot.loaded_size;
-    return total;
+static void apply_data_expect_to_slots(Scenario& scenario) {
+    if (!(scenario.data_expect.verify_readback || scenario.data_expect.require_readback_match)) return;
+    for (auto& slot : scenario.slots) {
+        if (!slot.file.empty() && !slot.deferload) slot.verify_readback = true;
+    }
 }
 
-static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video) {
+static void validate_video(Assertions& asserts, const Scenario& scenario, const VideoCapture& video, const InputDriver& inputs) {
     const auto& expect = scenario.video_expect;
     const auto& meta = video.last_metadata();
     const auto agg = video.aggregate_after_startup_frames(expect.ignore_startup_frames);
@@ -973,6 +1636,16 @@ static void validate_video(Assertions& asserts, const Scenario& scenario, const 
     if (expect.min_nonzero_pixels && meta.nonzero_pixels < expect.min_nonzero_pixels) asserts.fail("video: nonzero pixel count below expectation");
     if (expect.min_changed_pixels && video.max_changed_pixels_from_previous() < expect.min_changed_pixels) asserts.fail("video: changed pixel count below expectation");
     if (expect.min_changed_frames && video.changed_frames() < expect.min_changed_frames) asserts.fail("video: changed frame count below expectation");
+    const auto input_response = make_input_response_report(scenario, inputs, video);
+    if (expect.require_change_after_input && !input_response.pass) {
+        if (!input_response.available) asserts.fail("video: input response gate had no delivered input");
+        else asserts.fail("video: no frame changed after input");
+    }
+    for (const auto& report : make_named_phase_reports(scenario, inputs, video)) {
+        if (report.required && !report.pass) {
+            asserts.fail("video: phase " + report.name + " did not change");
+        }
+    }
     if ((expect.min_refresh_hz || expect.max_refresh_hz) && expect.pixel_clock_hz > 0.0 && meta.total_pixel_clocks > 0) {
         const double refresh = expect.pixel_clock_hz / static_cast<double>(meta.total_pixel_clocks);
         if (expect.min_refresh_hz && refresh < expect.min_refresh_hz) asserts.fail("video: refresh below expected range");
@@ -980,7 +1653,12 @@ static void validate_video(Assertions& asserts, const Scenario& scenario, const 
     }
 }
 
-static void validate_audio(Assertions& asserts, const Scenario& scenario, const AudioCapture& audio) {
+static void validate_audio(
+    Assertions& asserts,
+    const Scenario& scenario,
+    const AudioCapture& audio,
+    const InputDriver& inputs,
+    const AudioFrameMarkers& audio_frame_markers) {
     const auto& expect = scenario.audio_expect;
     const auto& stats = audio.stats();
     if (stats.samples < expect.min_samples) asserts.fail("audio: decoded sample count below expectation");
@@ -1003,21 +1681,33 @@ static void validate_audio(Assertions& asserts, const Scenario& scenario, const 
         const auto jitter = stats.lrck_half_period_mclk_max - stats.lrck_half_period_mclk_min;
         if (jitter > expect.max_lrck_half_period_jitter) asserts.fail("audio: LRCK half-period jitter exceeded");
     }
+    const auto input_response = make_input_audio_response_report(scenario, inputs, audio, audio_frame_markers);
+    if (expect.require_activity_after_input && !input_response.pass) {
+        if (!input_response.available) asserts.fail("audio: input response gate had no delivered input or frame markers");
+        else asserts.fail("audio: no activity after input");
+    }
 }
 
 static void validate_data(Assertions& asserts, const Scenario& scenario) {
     const auto& expect = scenario.data_expect;
     for (const auto& slot : scenario.slots) {
-        if (expect.require_required_slots && slot.required && !slot.deferload && slot.loaded_size == 0) {
+        if (expect.require_required_slots && slot.required && !slot.deferload && slot.has_address && slot.loaded_size == 0) {
             asserts.fail("data: required slot " + std::to_string(slot.id) + " was not loaded");
         }
-        if (expect.require_all_file_slots_loaded && !slot.deferload && !slot.file.empty() && slot.loaded_size == 0) {
+        const bool slot_file_available = !slot.file.empty() && std::filesystem::exists(slot.file);
+        if (expect.require_all_file_slots_loaded && !slot.deferload && slot_file_available && slot.loaded_size == 0) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " has a file but loaded zero bytes");
         }
         if (slot.has_expected_checksum && slot.loaded_size != 0 && slot.loaded_checksum != slot.expected_checksum) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " checksum mismatch");
         }
         const bool validate_host_boot_load = slot.loaded_size != 0 && !slot.file.empty() && !slot.deferload;
+        if (expect.require_readback_match && validate_host_boot_load && !slot.readback_attempted) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " readback was not attempted");
+        }
+        if (slot.readback_attempted && !slot.readback_matches) {
+            asserts.fail("data: slot " + std::to_string(slot.id) + " readback mismatch");
+        }
         if (validate_host_boot_load && slot.observed_write_words != slot.loaded_words) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " bridge write count mismatch");
         }
@@ -1031,7 +1721,7 @@ static void validate_data(Assertions& asserts, const Scenario& scenario) {
             asserts.fail("data: slot " + std::to_string(slot.id) + " bridge write address stride mismatch");
         }
     }
-    if (expect.expected_total_loaded_bytes && total_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {
+    if (expect.expected_total_loaded_bytes && host_loaded_bytes(scenario.slots) != expect.expected_total_loaded_bytes) {
         asserts.fail("data: total loaded byte count mismatch");
     }
 }
@@ -1126,11 +1816,14 @@ static std::vector<ReadbackObservation> run_readbacks(Bridge& bridge, const Scen
 
 int main(int argc, char** argv) {
     CliOptions opt;
+    Scenario scenario;
+    bool scenario_loaded = false;
     std::string phase = "startup";
     try {
         opt = parse_args(argc, argv);
         phase = "scenario";
-        auto scenario = parse_scenario(opt.scenario_path);
+        scenario = parse_scenario(opt.scenario_path);
+        scenario_loaded = true;
         if (!opt.data_json.empty()) merge_slots(scenario.slots, parse_data_json(opt.data_json));
         if (!opt.interact_json.empty()) {
             auto scenario_interact = scenario.interact;
@@ -1139,6 +1832,7 @@ int main(int argc, char** argv) {
             scenario.interact.append(scenario_interact);
         }
         for (const auto& [id, file] : opt.slot_overrides) apply_slot_file_override(scenario.slots, id, file);
+        apply_data_expect_to_slots(scenario);
         if (opt.frames_override) scenario.frames = opt.frames_override;
         if (opt.timeout_cycles_override) scenario.timeout_cycles = opt.timeout_cycles_override;
         if (!opt.video_json.empty()) {
@@ -1191,6 +1885,7 @@ int main(int argc, char** argv) {
 
         size_t interact_writes = 0;
         std::vector<SavestateReport> savestate_reports;
+        AudioFrameMarkers audio_frame_markers;
         BootTrace boot_trace;
         if (!opt.no_boot) {
             phase = "boot";
@@ -1207,16 +1902,19 @@ int main(int argc, char** argv) {
             }
             video.reset_capture();
             audio.reset_capture();
+            audio_frame_markers.clear();
         }
 
         if (!opt.dump_savestates.empty()) fs::create_directories(opt.dump_savestates);
         phase = "host_commands";
         execute_due_host_commands(bridge, scenario, savestate_reports, opt.dump_savestates, 0, sim.cycles_74a());
+        record_audio_frame_marker(audio_frame_markers, video.frames_started(), audio);
 
         if (opt.interactive) {
             phase = "play";
             const int rc = run_interactive_loop(sim, video, inputs, bridge, scenario, savestate_reports, opt);
 
+            const MemoryActivitySnapshot memory_activity = capture_memory_activity(top.get());
             top->final();
             phase = "audio";
             audio.finish();
@@ -1229,7 +1927,7 @@ int main(int argc, char** argv) {
             write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
             std::vector<ReadbackObservation> readback_observations;
             std::vector<std::string> failures;
-            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, failures, interact_writes, sim.cycles_74a());
+            write_result_json(opt.result_json, rc == 0, rc == 0 ? "" : "play", "", scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, failures, interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, rc == 0, scenario, video);
             std::cout << "PASS play: frames=" << video.frames_completed() << " cycles_74a=" << sim.cycles_74a() << "\n";
             return rc;
@@ -1237,6 +1935,7 @@ int main(int argc, char** argv) {
 
         uint64_t last_frame_start = video.frames_started();
         inputs.on_frame(last_frame_start);
+        record_audio_frame_marker(audio_frame_markers, last_frame_start, audio);
         uint64_t next_target_service_cycle = opt.target_service_interval_cycles ? sim.cycles_74a() + opt.target_service_interval_cycles : 0;
         phase = "run";
         while (!context->gotFinish() && video.frames_completed() < scenario.frames && sim.cycles_74a() < scenario.timeout_cycles) {
@@ -1249,10 +1948,12 @@ int main(int argc, char** argv) {
             if (video.frames_started() != last_frame_start) {
                 last_frame_start = video.frames_started();
                 inputs.on_frame(last_frame_start);
+                record_audio_frame_marker(audio_frame_markers, last_frame_start, audio);
                 execute_due_host_commands(bridge, scenario, savestate_reports, opt.dump_savestates, last_frame_start, sim.cycles_74a());
             }
         }
 
+        const MemoryActivitySnapshot memory_activity = capture_memory_activity(top.get());
         top->final();
         phase = "audio";
         audio.finish();
@@ -1269,8 +1970,8 @@ int main(int argc, char** argv) {
         if (!opt.dump_saves.empty()) save_reports = bridge.unload_nonvolatile(scenario.slots, opt.dump_saves);
         write_bridge_summary_json(opt.bridge_summary, bridge, scenario.slots);
 
-        validate_video(asserts, scenario, video);
-        validate_audio(asserts, scenario, audio);
+        validate_video(asserts, scenario, video, inputs);
+        validate_audio(asserts, scenario, audio, inputs, audio_frame_markers);
         validate_data(asserts, scenario);
         validate_bridge(asserts, scenario, bridge);
         if (!opt.no_boot) validate_reset(asserts, scenario, boot_trace);
@@ -1282,12 +1983,12 @@ int main(int argc, char** argv) {
         if (!asserts.ok()) {
             asserts.print();
             print_failure_diagnostics("assert", opt.result_json, video, audio, bridge, sim.cycles_74a());
-            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
+            write_result_json(opt.result_json, false, "assert", format_failure_summary(asserts), scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
             write_video_shape_json(opt.video_shape_json, opt.result_json, false, scenario, video);
             return 1;
         }
 
-        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, asserts.failures(), interact_writes, sim.cycles_74a());
+        write_result_json(opt.result_json, true, "", "", scenario, scenario.slots, video, audio, audio_frame_markers, inputs, bridge, boot_trace, save_reports, savestate_reports, readback_observations, memory_activity, asserts.failures(), interact_writes, opt.interact_verify_readback, sim.cycles_74a());
         write_video_shape_json(opt.video_shape_json, opt.result_json, true, scenario, video);
         const auto& meta = video.last_metadata();
         const auto& astats = audio.stats();
@@ -1298,7 +1999,7 @@ int main(int argc, char** argv) {
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "apfsim error: " << e.what() << "\n";
-        write_failure_result(opt.result_json, phase, e.what());
+        write_failure_result(opt.result_json, phase, e.what(), scenario_loaded ? &scenario : nullptr);
         return 2;
     }
 }

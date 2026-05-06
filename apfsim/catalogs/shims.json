@@ -1,4 +1,259 @@
 {
   "schema": "apfsim.shim_catalog.v1",
-  "entries": []
+  "entries": [
+    {
+      "name": "intel_pllbase_sim",
+      "kind": "compile_shim",
+      "confidence": "deterministic_clock",
+      "description": "Deterministic simulation replacement for Intel/Analogue PLL wrappers such as mf_pllbase, altpll, and altera_pll.",
+      "modules": ["mf_pllbase", "altpll", "altera_pll"],
+      "detect": {
+        "inventory_flags": ["uses_pll"],
+        "source_patterns": ["\\bmf_pllbase\\b", "\\baltpll\\b", "\\baltera_pll\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/mf_pllbase_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/mf_pllbase_sim.sv"],
+      "diagnostic_codes": ["CLOCK_NOT_TOGGLING"]
+    },
+    {
+      "name": "intel_bram_shims",
+      "kind": "behavioral_model",
+      "confidence": "sim_only",
+      "description": "Behavioral internal RAM replacements for altsyncram and common dual-port RAM wrappers.",
+      "modules": ["altsyncram", "dpram"],
+      "memory_classes": ["bram"],
+      "detect": {
+        "inventory_flags": ["uses_altsyncram", "uses_bram"],
+        "memory_classes": ["bram"],
+        "source_patterns": ["\\baltsyncram\\b", "\\bdpram\\b"]
+      },
+      "filelist_entries": [
+        "{apfsim}/rtl_shims/altsyncram_sim.sv",
+        "{apfsim}/rtl_shims/dpram_sim.sv"
+      ],
+      "required_paths": [
+        "{apfsim}/rtl_shims/altsyncram_sim.sv",
+        "{apfsim}/rtl_shims/dpram_sim.sv"
+      ],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "intel_fifo_shims",
+      "kind": "behavioral_model",
+      "confidence": "sim_only",
+      "description": "Behavioral FIFO replacements for dcfifo and dcfifo_mixed_widths.",
+      "modules": ["dcfifo", "dcfifo_mixed_widths"],
+      "memory_classes": ["fifo"],
+      "detect": {
+        "inventory_flags": ["uses_dcfifo"],
+        "memory_classes": ["fifo"],
+        "source_patterns": ["\\bdcfifo\\b", "\\bdcfifo_mixed_widths\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/dcfifo_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/dcfifo_sim.sv"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "intel_lpm_arithmetic",
+      "kind": "compile_shim",
+      "confidence": "sim_only",
+      "description": "Small public behavioral subset for common lpm arithmetic primitives.",
+      "modules": ["lpm_mult", "lpm_add_sub"],
+      "detect": {
+        "source_patterns": ["\\blpm_mult\\b", "\\blpm_add_sub\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "intel_ddio_shims",
+      "kind": "compile_shim",
+      "confidence": "apf_pin_only",
+      "description": "Public simulation subset for common Intel DDIO pin primitives used by Pocket and JTFRAME shells.",
+      "modules": ["altddio_out", "altddio_bidir"],
+      "detect": {
+        "source_patterns": ["\\baltddio_out\\b", "\\baltddio_bidir\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/vendor_ip_stubs.sv"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "jtframe_t80s_public_translation",
+      "kind": "translated_rtl_or_compile_stub",
+      "confidence": "public_translation_preferred",
+      "description": "Prefer JTFRAME's public Verilog T80s translation when present; otherwise fall back to an explicit compile-only T80s stub so architecture blockage is visible.",
+      "modules": ["T80s"],
+      "detect": {
+        "source_patterns": ["\\bT80s\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/t80/T80s.v",
+        "{root}/../modules/jtframe/hdl/cpu/t80/T80s.v",
+        "{root}/../../modules/jtframe/hdl/cpu/t80/T80s.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/t80/T80s.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "fallback_filelist_entries": ["{apfsim}/rtl_shims/jtframe_t80s_stub.sv"],
+      "fallback_required_paths": ["{apfsim}/rtl_shims/jtframe_t80s_stub.sv"],
+      "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
+    },
+    {
+      "name": "jtframe_t48_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the T48/MCS-48 core when sound boards instantiate t48_core.",
+      "modules": ["t48_core"],
+      "detect": {
+        "source_patterns": ["\\bt48_core\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "{root}/../modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "{root}/../../modules/jtframe/hdl/cpu/t48/t48_core.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/t48/t48_core.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
+    },
+    {
+      "name": "jtframe_t8243_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the 8243 expander when sound boards instantiate t8243_sync_notri.",
+      "modules": ["t8243_sync_notri"],
+      "detect": {
+        "source_patterns": ["\\bt8243_sync_notri\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "{root}/../modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "{root}/../../modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/t8243/t8243_sync_notri.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["VHDL_ENTITY_STUBBED"]
+    },
+    {
+      "name": "vlm5030_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTCORES' public Verilog translation of the Sanyo VLM5030 speech synthesizer when cores instantiate vlm5030_gl.",
+      "modules": ["vlm5030_gl"],
+      "detect": {
+        "source_patterns": ["\\bvlm5030_gl\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/vlm5030/hdl/vlm5030.v",
+        "{root}/../modules/vlm5030/hdl/vlm5030.v",
+        "{root}/../../modules/vlm5030/hdl/vlm5030.v",
+        "$JTCORES_ROOT/modules/vlm5030/hdl/vlm5030.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "jtframe_mc8051_public_translation",
+      "kind": "translated_rtl",
+      "confidence": "public_translation",
+      "description": "Use JTFRAME's public Verilog translation of the Oregano 8051 core when jtframe_8751mcu instantiates mc8051_core.",
+      "modules": ["mc8051_core"],
+      "detect": {
+        "source_patterns": ["\\bmc8051_core\\b"]
+      },
+      "source_candidates": [
+        "{root}/modules/jtframe/hdl/cpu/mc8051.v",
+        "{root}/../modules/jtframe/hdl/cpu/mc8051.v",
+        "{root}/../../modules/jtframe/hdl/cpu/mc8051.v",
+        "$JTCORES_ROOT/modules/jtframe/hdl/cpu/mc8051.v"
+      ],
+      "filelist_entries": ["{catalog_source}"],
+      "required_paths": ["{catalog_source}"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "jtframe_fx68k_verilator_compat",
+      "kind": "verilator_compat_flags",
+      "confidence": "compile_only",
+      "description": "Suppress Verilator's BLKANDNBLK rejection for JTFRAME's fx68k SystemVerilog translation so APF contract bring-up can proceed.",
+      "modules": ["fx68k"],
+      "detect": {
+        "source_patterns": ["\\bmodule\\s+fx68k\\b"]
+      },
+      "required_paths": [
+        "$JTCORES_ROOT/modules/fx68k/hdl/microrom.mem",
+        "$JTCORES_ROOT/modules/fx68k/hdl/nanorom.mem"
+      ],
+      "runtime_cwd": "$JTCORES_ROOT/modules/fx68k/hdl",
+      "verilator_flags": ["-Wno-BLKANDNBLK", "--no-assert"],
+      "diagnostic_codes": ["SHIM_REQUIRED"]
+    },
+    {
+      "name": "sdram_ideal_transactional",
+      "kind": "behavioral_model",
+      "confidence": "bringup_only",
+      "description": "Idealized request/ack SDRAM model for early APF bring-up; not Pocket timing accurate.",
+      "modules": ["sdram"],
+      "memory_classes": ["sdram"],
+      "detect": {
+        "inventory_flags": ["uses_sdram"],
+        "memory_classes": ["sdram"],
+        "source_patterns": ["\\bsdram\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/sdram_sim.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/sdram_sim.sv"],
+      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_STALL_TIMEOUT"]
+    },
+    {
+      "name": "sdram_pin_model",
+      "kind": "behavioral_model_library",
+      "confidence": "pin_level_bringup",
+      "description": "Public SDRAM pin-bus model with activity and error counters for wrappers that expose physical SDRAM signals.",
+      "modules": ["apfsim_sdram_pin_model"],
+      "memory_classes": ["sdram"],
+      "detect": {
+        "source_patterns": ["\\bSDRAM_DQ\\b", "\\bSDRAM_nRAS\\b", "\\bsdram_nras\\b"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["MEMORY_MODEL_REQUIRED", "MEMORY_BYTE_ENABLE_MISMATCH", "MEMORY_BUS_CONTENTION", "MEMORY_UNINITIALIZED_READ", "MEMORY_ROM_WRITE_MISMATCH", "MEMORY_ROM_COVERAGE_GAP", "SDRAM_COMMAND_ERROR", "SDRAM_REFRESH_MISSING"]
+    },
+    {
+      "name": "external_sram_pin_model",
+      "kind": "behavioral_model_library",
+      "confidence": "sim_only",
+      "description": "Generic async 16-bit SRAM pin model with byte-lane, contention, and activity counters for wrappers.",
+      "modules": ["apfsim_async_sram_16_model"],
+      "memory_classes": ["sram"],
+      "detect": {
+        "inventory_flags": ["uses_sram"],
+        "memory_classes": ["sram"],
+        "source_patterns": ["\\bSRAM_", "\\bsram\\b", "async[_-]?ram"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["SRAM_MODEL_REQUIRED", "SRAM_BUS_CONTENTION", "MEMORY_BYTE_ENABLE_MISMATCH"]
+    },
+    {
+      "name": "psram_cram_transactional_models",
+      "kind": "behavioral_model_library",
+      "confidence": "sim_only",
+      "description": "Generic latency-configurable PSRAM/CRAM-like transactional models for generated wrappers.",
+      "modules": ["apfsim_transactional_ram_model", "apfsim_psram_like_model", "apfsim_cram_like_model"],
+      "memory_classes": ["psram", "cram"],
+      "detect": {
+        "inventory_flags": ["uses_psram", "uses_cram"],
+        "memory_classes": ["psram", "cram"],
+        "source_patterns": ["\\bpsram\\b", "\\bhyperram\\b", "\\bcram\\b", "cart[_-]?ram"]
+      },
+      "filelist_entries": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "required_paths": ["{apfsim}/rtl_shims/external_memory_models.sv"],
+      "diagnostic_codes": ["PSRAM_MODEL_REQUIRED", "CRAM_MODEL_REQUIRED", "MEMORY_STALL_TIMEOUT", "MEMORY_BYTE_ENABLE_MISMATCH"]
+    }
+  ]
 }

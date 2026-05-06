@@ -49,6 +49,49 @@ Every run emits `result.json.video_shape` and `video_shape.json`. The stable con
 
 Use `bin/apfsim compare-video-json` to compare simulated APF output against generated `video.json`, and `bin/apfsim apply-video-shape` to patch generated metadata when simulation discovers a mismatch.
 
+## Input-Driven Video Activity
+
+Scenarios may require video to change after scripted input. This is useful for cores where attract mode is static but gameplay should visibly change after coin/start.
+
+```yaml
+inputs:
+  - frame: 2
+    player: 1
+    button: Select
+    hold_frames: 1
+  - frame: 3
+    player: 1
+    button: Start
+    hold_frames: 1
+phases:
+  - name: gameplay
+    after_input: true
+    duration_frames: 3
+    require_changed: true
+expect:
+  video:
+    require_change_after_input: true
+    input_response_window_frames: 3
+```
+
+Runs always emit `result.input_video_response`, `result.input_video_effect_seen`, and `result.video_activity` when input/video data exists. A required post-input gate failure is classified as `VIDEO_NO_POST_INPUT_CHANGE` instead of a generic static-frame warning.
+
+## Input-Driven Audio Activity
+
+Scenarios may also require decoded I2S audio activity after scripted input. This catches cores that clock audio during attract but never produce gameplay audio after coin/start.
+
+```yaml
+expect:
+  audio:
+    require_activity_after_input: true
+    input_response_window_frames: 3
+    min_samples_after_input: 1
+    min_nonzero_samples_after_input: 1
+    min_peak_after_input: 1
+```
+
+Runs emit `result.input_audio_response`, `result.input_audio_effect_seen`, and `result.audio_activity`. A required post-input audio gate failure is classified as `AUDIO_NO_POST_INPUT_ACTIVITY`.
+
 ## Runtime Lifecycle Injection
 
 Scenarios may include `host_commands:` entries to reproduce Pocket runtime behavior observed in hardware logs. Supported command names include numeric command words plus readable names such as `os_notify_menu_state`, `os_notify_cartridge_adapter`, `os_notify_docked_state`, `os_notify_display_mode`, `data_slot_update`, and `savestate_save`.
@@ -78,4 +121,5 @@ host_commands:
 - Savestate load/replay for `0x00A4` is not implemented.
 - Runtime data reload currently covers `0x008A`; full user-reload semantics for parameters bits 6, 7, and 8 still need reset/restart/bitstream-reload orchestration.
 - Package validation does not prove that every `interact.json` bridge address has matching HDL read/write decode; runtime profiles should add readback checks for that.
+- Package validation allows data slots with no `address` field. Setup-only JSON/instance slots may not have a bridge load address. Runtime scenarios still need an address when `apfsim` is expected to write a payload into core memory.
 - Physical cartridge, link port, IR, PSRAM, SRAM, and SDRAM timing are outside the generic APF gate unless a profile provides explicit models/checks.

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/audio_activity.schema.json",
+  "title": "apfsim audio activity report",
+  "type": "object",
+  "required": ["schema", "input_response"],
+  "properties": {
+    "schema": { "const": "apfsim.audio_activity.v1" },
+    "input_response": { "$ref": "#/$defs/phase" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["schema", "name", "available", "start_frame", "end_frame", "start_sample", "end_sample", "samples", "nonzero_samples", "peak", "required", "active", "pass"],
+      "properties": {
+        "schema": { "const": "apfsim.audio_activity_phase.v1" },
+        "name": { "type": "string" },
+        "start_reason": { "type": "string" },
+        "available": { "type": "boolean" },
+        "start_frame": { "type": "integer", "minimum": 0 },
+        "end_frame": { "type": "integer", "minimum": 0 },
+        "start_sample": { "type": "integer", "minimum": 0 },
+        "end_sample": { "type": "integer", "minimum": 0 },
+        "samples": { "type": "integer", "minimum": 0 },
+        "nonzero_samples": { "type": "integer", "minimum": 0 },
+        "peak": { "type": "integer", "minimum": 0 },
+        "peak_to_peak_l": { "type": "integer", "minimum": 0 },
+        "peak_to_peak_r": { "type": "integer", "minimum": 0 },
+        "clipped_samples": { "type": "integer", "minimum": 0 },
+        "activity": { "type": "string" },
+        "required": { "type": "boolean" },
+        "require_activity": { "type": "boolean" },
+        "min_samples": { "type": "integer", "minimum": 0 },
+        "min_nonzero_samples": { "type": "integer", "minimum": 0 },
+        "min_peak": { "type": "integer", "minimum": 0 },
+        "active": { "type": "boolean" },
+        "pass": { "type": "boolean" },
+        "input_event_index": { "type": "integer", "minimum": 0 },
+        "input_event_frame": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

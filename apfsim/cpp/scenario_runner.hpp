@@ -34,6 +34,11 @@ struct VideoExpect {
     uint64_t min_nonzero_pixels = 0;
     uint64_t min_changed_pixels = 0;
     uint64_t min_changed_frames = 0;
+    bool require_change_after_input = false;
+    uint64_t input_response_delay_frames = 0;
+    uint64_t input_response_window_frames = 0;
+    uint64_t min_changed_pixels_after_input = 1;
+    uint64_t min_changed_frames_after_input = 1;
 };
 
 struct AudioExpect {
@@ -45,11 +50,19 @@ struct AudioExpect {
     double expected_mclk_lrck_ratio = 0.0;
     double max_mclk_lrck_ratio_error = 0.0;
     uint64_t max_lrck_half_period_jitter = 0;
+    bool require_activity_after_input = false;
+    uint64_t input_response_delay_frames = 0;
+    uint64_t input_response_window_frames = 0;
+    size_t min_samples_after_input = 1;
+    size_t min_nonzero_samples_after_input = 1;
+    int min_peak_after_input = 1;
 };
 
 struct DataExpect {
     bool require_required_slots = true;
     bool require_all_file_slots_loaded = true;
+    bool verify_readback = false;
+    bool require_readback_match = false;
     uint64_t expected_total_loaded_bytes = 0;
 };
 
@@ -93,6 +106,20 @@ struct BridgeExpect {
     uint64_t min_target_commands = 0;
 };
 
+struct VideoPhaseExpect {
+    std::string name;
+    uint64_t start_frame = 1;
+    uint64_t end_frame = 0;
+    bool after_input = false;
+    uint64_t input_event_index = 0;
+    bool has_input_event_index = false;
+    uint64_t input_delay_frames = 0;
+    uint64_t duration_frames = 0;
+    bool require_changed = false;
+    uint64_t min_changed_frames = 1;
+    uint64_t min_changed_pixels = 1;
+};
+
 struct HostCommandEvent {
     std::string name;
     std::string command_name;
@@ -134,6 +161,7 @@ struct Scenario {
     BridgeExpect bridge_expect;
     std::vector<BridgeReadbackExpect> readbacks;
     std::vector<HostCommandEvent> host_commands;
+    std::vector<VideoPhaseExpect> video_phases;
 };
 
 inline uint16_t parse_host_command_name(std::string value) {
@@ -188,6 +216,7 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
         ExpectInteract,
         ExpectBridge,
         ExpectBridgeReadbacks,
+        VideoPhases,
         HostCommands
     };
     Section section = Section::None;
@@ -195,6 +224,7 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
     InputEvent* current_input = nullptr;
     BridgeReadbackExpect* current_readback = nullptr;
     HostCommandEvent* current_host_command = nullptr;
+    VideoPhaseExpect* current_video_phase = nullptr;
     bool in_interact = false;
     bool in_expect = false;
     bool in_expect_bridge = false;
@@ -215,9 +245,11 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             current_input = nullptr;
             current_readback = nullptr;
             current_host_command = nullptr;
+            current_video_phase = nullptr;
             if (trimmed == "data_slots:") { section = Section::DataSlots; continue; }
             if (trimmed == "inputs:") { section = Section::Inputs; continue; }
             if (trimmed == "host_commands:" || trimmed == "lifecycle:" || trimmed == "runtime_host_commands:") { section = Section::HostCommands; continue; }
+            if (trimmed == "phases:" || trimmed == "video_phases:" || trimmed == "scenario_phases:") { section = Section::VideoPhases; continue; }
             if (trimmed == "interact:") { section = Section::None; in_interact = true; continue; }
             if (trimmed == "run:") { section = Section::Run; continue; }
             if (trimmed == "expect:") { section = Section::None; in_expect = true; continue; }
@@ -254,6 +286,9 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
         } else if (section == Section::HostCommands && trimmed.rfind("-", 0) == 0) {
             scenario.host_commands.push_back({});
             current_host_command = &scenario.host_commands.back();
+        } else if (section == Section::VideoPhases && trimmed.rfind("-", 0) == 0) {
+            scenario.video_phases.push_back({});
+            current_video_phase = &scenario.video_phases.back();
         }
 
         const auto kv = parse_key_value(trimmed);
@@ -265,10 +300,14 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             if (key == "id") current_slot->id = static_cast<uint16_t>(parse_u64(value));
             else if (key == "name") current_slot->name = unquote(value);
             else if (key == "file") current_slot->file = unquote(value);
-            else if (key == "address") current_slot->address = static_cast<uint32_t>(parse_u64(value));
+            else if (key == "address") {
+                current_slot->address = static_cast<uint32_t>(parse_u64(value));
+                current_slot->has_address = true;
+            }
             else if (key == "required") current_slot->required = parse_bool(value);
             else if (key == "nonvolatile") current_slot->nonvolatile = parse_bool(value);
             else if (key == "deferload") current_slot->deferload = parse_bool(value);
+            else if (key == "verify_readback" || key == "readback_verify" || key == "verify_after_load") current_slot->verify_readback = parse_bool(value);
             else if (key == "size_exact") current_slot->size_exact = static_cast<size_t>(parse_u64(value));
             else if (key == "size_maximum") current_slot->size_maximum = static_cast<size_t>(parse_u64(value));
             else if (key == "expected_checksum" || key == "checksum" || key == "fnv1a64") {
@@ -310,6 +349,20 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
                 current_host_command->has_size = true;
             } else if (key == "update_slot_table") current_host_command->update_slot_table = parse_bool(value);
             else if (key == "output" || key == "output_file") current_host_command->output_path = unquote(value);
+        } else if (section == Section::VideoPhases && current_video_phase) {
+            if (key == "name") current_video_phase->name = unquote(value);
+            else if (key == "start_frame" || key == "start" || key == "frame") current_video_phase->start_frame = parse_u64(value);
+            else if (key == "end_frame" || key == "end") current_video_phase->end_frame = parse_u64(value);
+            else if (key == "after_input" || key == "after_start" || key == "start_after_input") current_video_phase->after_input = parse_bool(value);
+            else if (key == "input_event" || key == "input_event_index") {
+                current_video_phase->input_event_index = parse_u64(value);
+                current_video_phase->has_input_event_index = true;
+            }
+            else if (key == "input_delay_frames" || key == "delay_frames" || key == "offset_frames") current_video_phase->input_delay_frames = parse_u64(value);
+            else if (key == "duration_frames" || key == "window_frames") current_video_phase->duration_frames = parse_u64(value);
+            else if (key == "require_changed" || key == "require_change") current_video_phase->require_changed = parse_bool(value);
+            else if (key == "min_changed_frames") current_video_phase->min_changed_frames = parse_u64(value);
+            else if (key == "min_changed_pixels") current_video_phase->min_changed_pixels = parse_u64(value);
         } else if (section == Section::Run) {
             if (key == "until_frames" || key == "frames") scenario.frames = parse_u64(value);
             else if (key == "timeout_cycles") scenario.timeout_cycles = parse_u64(value);
@@ -338,6 +391,11 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "min_nonzero_pixels") scenario.video_expect.min_nonzero_pixels = parse_u64(value);
             else if (key == "min_changed_pixels") scenario.video_expect.min_changed_pixels = parse_u64(value);
             else if (key == "min_changed_frames") scenario.video_expect.min_changed_frames = parse_u64(value);
+            else if (key == "require_change_after_input" || key == "require_changed_after_input" || key == "frame_changed_after_input") scenario.video_expect.require_change_after_input = parse_bool(value);
+            else if (key == "input_response_delay_frames" || key == "after_input_delay_frames") scenario.video_expect.input_response_delay_frames = parse_u64(value);
+            else if (key == "input_response_window_frames" || key == "after_input_window_frames") scenario.video_expect.input_response_window_frames = parse_u64(value);
+            else if (key == "min_changed_pixels_after_input") scenario.video_expect.min_changed_pixels_after_input = parse_u64(value);
+            else if (key == "min_changed_frames_after_input") scenario.video_expect.min_changed_frames_after_input = parse_u64(value);
         } else if (section == Section::ExpectAudio) {
             if (key == "min_samples") scenario.audio_expect.min_samples = static_cast<size_t>(parse_u64(value));
             else if (key == "require_changing") scenario.audio_expect.require_changing = parse_bool(value);
@@ -347,9 +405,17 @@ inline Scenario parse_scenario(const std::filesystem::path& path) {
             else if (key == "expected_mclk_lrck_ratio") scenario.audio_expect.expected_mclk_lrck_ratio = parse_double(value);
             else if (key == "max_mclk_lrck_ratio_error") scenario.audio_expect.max_mclk_lrck_ratio_error = parse_double(value);
             else if (key == "max_lrck_half_period_jitter") scenario.audio_expect.max_lrck_half_period_jitter = parse_u64(value);
+            else if (key == "require_activity_after_input" || key == "require_audio_after_input" || key == "audio_after_input") scenario.audio_expect.require_activity_after_input = parse_bool(value);
+            else if (key == "input_response_delay_frames" || key == "after_input_delay_frames") scenario.audio_expect.input_response_delay_frames = parse_u64(value);
+            else if (key == "input_response_window_frames" || key == "after_input_window_frames") scenario.audio_expect.input_response_window_frames = parse_u64(value);
+            else if (key == "min_samples_after_input") scenario.audio_expect.min_samples_after_input = static_cast<size_t>(parse_u64(value));
+            else if (key == "min_nonzero_samples_after_input") scenario.audio_expect.min_nonzero_samples_after_input = static_cast<size_t>(parse_u64(value));
+            else if (key == "min_peak_after_input") scenario.audio_expect.min_peak_after_input = static_cast<int>(parse_u64(value));
         } else if (section == Section::ExpectData) {
             if (key == "require_required_slots") scenario.data_expect.require_required_slots = parse_bool(value);
             else if (key == "require_all_file_slots_loaded") scenario.data_expect.require_all_file_slots_loaded = parse_bool(value);
+            else if (key == "verify_readback" || key == "readback_verify" || key == "verify_slots_readback") scenario.data_expect.verify_readback = parse_bool(value);
+            else if (key == "require_readback_match" || key == "require_readback_matches") scenario.data_expect.require_readback_match = parse_bool(value);
             else if (key == "expected_total_loaded_bytes") scenario.data_expect.expected_total_loaded_bytes = parse_u64(value);
         } else if (section == Section::ExpectReset) {
             if (key == "require_reset_enter") scenario.reset_expect.require_reset_enter = parse_bool(value);

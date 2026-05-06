@@ -63,8 +63,17 @@
       "items": { "type": "string" }
     },
     "expected_artifacts": {
+      "description": "Runtime artifacts that must exist immediately after simulator execution. Do not list bringup postprocess artifacts such as diagnostics.json, bringup-report.md, repair-plan.json, summary.json, summary.tsv, or package_check.json.",
       "type": "array",
       "items": { "type": "string" }
+    },
+    "memory": {
+      "description": "Detected memory dependencies and selected sim model confidence.",
+      "type": "object"
+    },
+    "wrapper_generation": {
+      "description": "Reviewable generated wrapper scaffolds such as external RAM model helpers.",
+      "type": "object"
     },
     "generated_files": { "type": "array" }
   },

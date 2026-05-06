@@ -66,8 +66,15 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
     assert result["data"]["slots"][0]["observed_first_write_address"] == "0x10000000"
     assert result["data"]["slots"][0]["observed_last_write_address"] == "0x100003FC"
     assert result["data"]["slots"][0]["observed_write_address_errors"] == 0
-    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
-    assert result["data"]["slots"][0]["expected_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x22881EE47ABB6B25"
+    assert result["data"]["slots"][0]["expected_checksum"] == "0x22881EE47ABB6B25"
+    assert result["data"]["slots"][0]["verify_readback"] is True
+    assert result["data"]["slots"][0]["readback_attempted"] is True
+    assert result["data"]["slots"][0]["readback_matches"] is True
+    assert result["data"]["slots"][0]["readback_bytes"] == 1024
+    assert result["data"]["slots"][0]["readback_crc32"] == result["data"]["slots"][0]["loaded_crc32"]
+    assert result["data"]["slots"][0]["readback_checksum"] == result["data"]["slots"][0]["loaded_checksum"]
+    assert result["data"]["slots"][0]["readback_mismatch_count"] == 0
     assert result["readbacks"][0]["name"] == "mock_rom_write_count"
     assert result["readbacks"][0]["ok"] is True
 
@@ -107,6 +114,31 @@ def test_strict_port_gate_reports_all_core_port_checks(tmp_path):
     assert result["interact"]["persistent_writes"] >= 1
     assert result["input"]["ever_active"] is True
     assert result["failures"] == []
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
+def test_rom_load_stress_covers_odd_sized_payload_readback(tmp_path):
+    artifacts = tmp_path / "rom-stress"
+    r = run_cli("run", "--profile", "mock_rom_stress", "--artifacts", str(artifacts), timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    result = json.loads((artifacts / "result.json").read_text())
+    assert result["ok"] is True
+    slot = result["data"]["slots"][0]
+    assert slot["id"] == 1
+    assert slot["loaded_size"] == 1025
+    assert slot["loaded_words"] == 257
+    assert slot["observed_write_words"] == 257
+    assert slot["observed_first_write_address"] == "0x10000000"
+    assert slot["observed_last_write_address"] == "0x10000400"
+    assert slot["loaded_checksum"] == "0xAB58FF4701261F50"
+    assert slot["readback_attempted"] is True
+    assert slot["readback_matches"] is True
+    assert slot["readback_bytes"] == 1025
+    assert slot["readback_checksum"] == slot["loaded_checksum"]
+    assert slot["readback_mismatch_count"] == 0
+    readbacks = {item["name"]: item for item in result["readbacks"]}
+    assert readbacks["mock_rom_write_count"]["ok"] is True
 
 
 @pytest.mark.skipif(shutil.which("verilator") is None, reason="verilator not installed")
@@ -284,7 +316,7 @@ def test_failed_data_checksum_gate_writes_actionable_result(tmp_path):
     assert result["ok"] is False
     assert result["failed_phase"] == "assert"
     assert "data: slot 1 checksum mismatch" in result["failures"]
-    assert result["data"]["slots"][0]["loaded_checksum"] == "0x86EA4CAF14129F83"
+    assert result["data"]["slots"][0]["loaded_checksum"] == "0x22881EE47ABB6B25"
     assert result["data"]["slots"][0]["expected_checksum"] == "0x0000000000000001"
 
 

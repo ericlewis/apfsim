@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/run_summary.schema.json",
+  "title": "apfsim normalized run summary",
+  "type": "object",
+  "required": ["schema", "artifact_dir", "ok", "row", "diagnostics", "package", "video", "audio", "data", "source_provenance"],
+  "properties": {
+    "schema": { "const": "apfsim.run_summary.v1" },
+    "artifact_dir": { "type": "string" },
+    "ok": { "type": "boolean" },
+    "row": {
+      "type": "object",
+      "required": ["ok", "first_error_code", "blocking_codes", "warning_codes", "active_width", "active_height", "audio_activity", "loaded_bytes_total", "artifact_dir"],
+      "additionalProperties": true
+    },
+    "diagnostics": { "type": "object" },
+    "package": { "type": "object" },
+    "video": { "type": "object" },
+    "audio": { "type": "object" },
+    "data": { "type": "object" },
+    "source_provenance": { "type": "object" }
+  },
+  "additionalProperties": true
+}

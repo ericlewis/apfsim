@@ -1,0 +1,67 @@
+{
+  "name": "mock_external_sram",
+  "description": "Built-in APF mock core with ROM data loaded through the public async SRAM model and bridge readback verification enabled",
+  "top": "core_top",
+  "filelist": "examples/mock/filelist_external_sram.f",
+  "scenario": "scenarios/rom_load_stress.yml",
+  "metadata_jsons": {
+    "data": "examples/mock/data.json",
+    "video": "examples/mock/video.json",
+    "interact": "examples/mock/interact.json"
+  },
+  "verilator_flags": [
+    "-DAPFSIM_EXTERNAL_SRAM_MODEL",
+    "-DAPFSIM_MEMORY_COUNTER_TEST"
+  ],
+  "memory_activity": {
+    "top_port_classes": ["sram"]
+  },
+  "memory": {
+    "schema": "apfsim.memory_dependencies.v1",
+    "required": true,
+    "classes": ["sram"],
+    "external_classes": ["sram"],
+    "models": {
+      "sram": {
+        "selected": "async_sram_16_pin",
+        "confidence": "observed",
+        "source": "rtl_shims/external_memory_models.sv",
+        "notes": "Mock profile wires the public async SRAM model to the APF bridge-visible ROM load window."
+      }
+    },
+    "risks": []
+  },
+  "wrapper_generation": {
+    "memory_models": {
+      "generated": false,
+      "classes": ["sram"],
+      "activity_counters": [
+        "sram_read_count",
+        "sram_write_count",
+        "sram_bus_contention_error",
+        "sram_byte_enable_error"
+      ],
+      "wire_required": false,
+      "confidence": "observed"
+    }
+  },
+  "frames": 2,
+  "timeout_cycles": 5000000,
+  "build_dir": "build/profiles/mock_external_sram/obj",
+  "artifact_root": "build/profiles/mock_external_sram/run",
+  "required_paths": [
+    "examples/mock/core_top.sv",
+    "rtl_shims/external_memory_models.sv",
+    "examples/assets/rom_stress.bin"
+  ],
+  "expected_artifacts": [
+    "result.json",
+    "video_shape.json",
+    "lifecycle.json",
+    "bridge.log",
+    "video/frame_000001.json",
+    "video/frame_000001.ppm",
+    "audio/out.wav",
+    "audio/stats.json"
+  ]
+}

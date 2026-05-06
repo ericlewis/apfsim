@@ -1,0 +1,40 @@
+name: mock_rom_load_stress
+data_slots:
+  - id: 1
+    name: ROM_STRESS
+    file: examples/assets/rom_stress.bin
+    address: 0x10000000
+    required: true
+    verify_readback: true
+    expected_checksum: 0xAB58FF4701261F50
+run:
+  until_frames: 2
+  timeout_cycles: 5000000
+expect:
+  status: running
+  video:
+    active_width: 256
+    active_height: 224
+    min_frames: 2
+    max_errors: 0
+  audio:
+    min_samples: 1
+  data:
+    require_required_slots: true
+    require_all_file_slots_loaded: true
+    require_readback_match: true
+    expected_total_loaded_bytes: 1025
+  reset:
+    require_reset_enter: true
+    require_reset_exit: true
+    require_ready_to_run: true
+  bridge:
+    require_little_endian: true
+    require_slot_table: true
+    min_host_commands: 6
+    min_target_commands: 1
+    readbacks:
+      - name: mock_rom_write_count
+        address: 0x50000020
+        value: 1028
+        mask: 0xffffffff

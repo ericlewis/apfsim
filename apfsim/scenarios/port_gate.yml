@@ -5,7 +5,8 @@ data_slots:
     file: examples/assets/mock.rom
     address: 0x10000000
     required: true
-    expected_checksum: 0x86EA4CAF14129F83
+    verify_readback: true
+    expected_checksum: 0x22881EE47ABB6B25
 interact:
   writes:
     - frame: boot
@@ -49,6 +50,7 @@ expect:
   data:
     require_required_slots: true
     require_all_file_slots_loaded: true
+    require_readback_match: true
     expected_total_loaded_bytes: 1024
   reset:
     require_reset_enter: true

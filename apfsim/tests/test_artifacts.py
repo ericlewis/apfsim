@@ -212,14 +212,25 @@ def test_public_schema_files_are_valid_json():
     schema_dir = ROOT / "schemas"
     expected = {
         "bridge_summary.schema.json",
+        "corpus_summary.schema.json",
+        "diagnostic.schema.json",
         "generated_profile.schema.json",
         "lifecycle.schema.json",
+        "memory_activity.schema.json",
+        "memory_dependencies.schema.json",
+        "package_check.schema.json",
         "profile.schema.json",
+        "repair_plan.schema.json",
         "result.schema.json",
+        "run_summary.schema.json",
         "shim_catalog.schema.json",
+        "source_contract.schema.json",
+        "source_provenance.schema.json",
         "video_apply.schema.json",
+        "video_activity.schema.json",
         "video_compare.schema.json",
         "video_shape.schema.json",
+        "wrapper_synthesis.schema.json",
     }
     found = {path.name for path in schema_dir.glob("*.schema.json")}
     assert expected <= found

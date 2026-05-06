@@ -7,11 +7,13 @@ import json
 import os
 import re
 import shlex
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from core_discovery import find_slot_objects, find_video_modes, inspect_core
+from memory_wrapper import memory_wrapper_plan, render_memory_wrapper_sv
 
 RTL_EXTS = {".v", ".sv"}
 INCLUDE_EXTS = {".v", ".sv", ".vh", ".svh"}
@@ -47,11 +49,19 @@ QSF_DEFINE_ASSIGNMENTS = {
     "VERILOG_DEFINE",
     "SYSTEMVERILOG_DEFINE",
 }
+QSF_TOP_ASSIGNMENTS = {"TOP_LEVEL_ENTITY"}
+MEMORY_REQUIRED_RISK_BY_CLASS = {
+    "ddr": "MEMORY_MODEL_REQUIRED",
+    "psram": "PSRAM_MODEL_REQUIRED",
+    "cram": "CRAM_MODEL_REQUIRED",
+    "sram": "SRAM_MODEL_REQUIRED",
+}
 
 
 @dataclass
 class QsfProject:
     path: Path | None = None
+    top_level_entity: str = ""
     sources: list[Path] = field(default_factory=list)
     include_dirs: list[Path] = field(default_factory=list)
     defines: list[str] = field(default_factory=list)
@@ -71,6 +81,8 @@ class GeneratedProfile:
     notes_path: Path
     report_path: Path
     selected_shims: list[str] = field(default_factory=list)
+    selected_shim_details: list[dict[str, Any]] = field(default_factory=list)
+    risks: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     profile: dict[str, Any] = field(default_factory=dict)
     qsf: dict[str, Any] | None = None
@@ -99,11 +111,30 @@ def generate_profile_candidate(
         raise FileExistsError(f"output directory already exists: {profile_dir}")
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    catalog = load_catalog(catalog_path or apfsim_dir / "catalogs" / "shims.json")
-    selected_shims = select_shims(root, inv, catalog)
-    generated_paths = generated_filelist_entries(selected_shims, catalog, root, apfsim_dir, name)
-    excluded_sources = generated_source_paths(selected_shims, catalog, root, apfsim_dir, name)
     qsf_project = parse_qsf_project(select_qsf(root, inv))
+    catalog = load_catalog(catalog_path or apfsim_dir / "catalogs" / "shims.json")
+    selected_shims = select_shims(root, inv, catalog, qsf_project)
+    selected_shim_details = shim_detail_records(selected_shims, catalog, root, apfsim_dir, name)
+    generated_paths = generated_filelist_entries(selected_shims, catalog, root, apfsim_dir, name)
+    memory = memory_with_catalog_models(inv.memory, selected_shims, catalog)
+    memory_wrapper = memory_wrapper_plan(memory)
+    wrapper_generation: dict[str, Any] = {}
+    if memory_wrapper.get("generated"):
+        generated_paths.append(str(memory_wrapper["path"]))
+        wrapper_module = f"apfsim_{name}_memory_models"
+        (profile_dir / "apfsim_memory_models.sv").write_text(
+            render_memory_wrapper_sv(memory, module_name=wrapper_module)
+        )
+        memory_wrapper["module_name"] = wrapper_module
+        wrapper_generation["memory_models"] = memory_wrapper
+    excluded_sources = generated_source_paths(selected_shims, catalog, root, apfsim_dir, name)
+    jtframe_wrapper = maybe_generate_jtframe_pocket_wrapper(qsf_project, profile_dir)
+    if jtframe_wrapper:
+        generated_paths.append(str(jtframe_wrapper["path"]))
+        generated_paths.append("rtl_shims/external_memory_models.sv")
+        wrapper_generation["jtframe_pocket_logical_wrapper"] = jtframe_wrapper
+        for source in jtframe_wrapper.get("replaced_sources", []):
+            excluded_sources.add(Path(str(source)).expanduser().resolve())
     filelist_lines = build_filelist(root, inv, generated_paths, excluded_sources, qsf_project, apfsim_dir)
     filelist_path.write_text("\n".join(filelist_lines) + "\n")
 
@@ -113,11 +144,20 @@ def generate_profile_candidate(
     scenario, scenario_warnings = build_scenario(root, data_json, video_json, apfsim_dir, name)
     scenario_path.write_text(scenario)
 
+    top_module = str(jtframe_wrapper.get("top", "")) if jtframe_wrapper else (qsf_project.top_level_entity or "core_top")
     required_paths = [placeholderize_path(root / rel, root, apfsim_dir) for rel in inv.top_files[:1]]
+    top_source = find_module_source(qsf_project.sources, top_module)
+    if top_source:
+        required_paths.append(placeholderize_path(top_source, root, apfsim_dir))
     for metadata in [data_json, video_json, interact_json]:
         if metadata:
             required_paths.append(placeholderize_path(metadata, root, apfsim_dir))
     required_paths.extend(placeholderize_value(path, root, apfsim_dir) for path in required_paths_for_shims(selected_shims, catalog, root, apfsim_dir, name))
+    if memory_wrapper.get("generated"):
+        required_paths.append(str(memory_wrapper["path"]))
+    if jtframe_wrapper:
+        required_paths.append(str(jtframe_wrapper["path"]))
+        required_paths.append("{apfsim}/rtl_shims/external_memory_models.sv")
     required_paths = dedupe(required_paths)
 
     profile: dict[str, Any] = {
@@ -125,7 +165,7 @@ def generate_profile_candidate(
         "description": f"Generated candidate profile for {root.name}; review before committing.",
         "external": True,
         "root_env": f"{env_prefix(name)}_ROOT",
-        "top": "core_top",
+        "top": top_module,
         "filelist": "{profile_dir}/filelist.f",
         "scenario": "{profile_dir}/scenario.yml",
         "metadata_jsons": {},
@@ -147,6 +187,15 @@ def generate_profile_candidate(
     }
     if selected_shims:
         profile["shim_catalog"] = selected_shims
+    if memory.get("required"):
+        profile["memory"] = memory
+    if jtframe_wrapper:
+        profile["memory_activity"] = {"top_port_classes": ["sdram"]}
+    if wrapper_generation:
+        profile["wrapper_generation"] = wrapper_generation
+    risks = profile_risks(inv, selected_shims, qsf_project)
+    if risks:
+        profile["risks"] = risks
     profile_sources = qsf_project.sources if qsf_project.sources else hdl_paths(root)
     if any(path.suffix == ".sv" for path in profile_sources):
         profile["verilator_flags"] = ["--sv"]
@@ -159,9 +208,9 @@ def generate_profile_candidate(
     if not profile["metadata_jsons"]:
         profile.pop("metadata_jsons")
 
-    warnings = scenario_warnings + generation_warnings(inv, selected_shims, filelist_lines, qsf_project, excluded_sources)
+    warnings = scenario_warnings + generation_warnings(inv, selected_shims, filelist_lines, qsf_project, excluded_sources, memory, top_module)
     profile_path.write_text(json.dumps(profile, indent=2) + "\n")
-    notes_path.write_text(render_notes(inv, profile, selected_shims, warnings, profile_path, filelist_path, scenario_path, qsf_project, excluded_sources))
+    notes_path.write_text(render_notes(inv, profile, selected_shim_details, warnings, profile_path, filelist_path, scenario_path, qsf_project, excluded_sources))
     qsf_payload = qsf_report(qsf_project, excluded_sources)
     report = {
         "schema": "apfsim.generated_profile.v1",
@@ -170,6 +219,9 @@ def generate_profile_candidate(
         "status": inv.status,
         "action": inv.action,
         "selected_shims": selected_shims,
+        "selected_shim_details": selected_shim_details,
+        "wrapper_generation": wrapper_generation,
+        "risks": risks,
         "paths": {
             "profile": str(profile_path),
             "filelist": str(filelist_path),
@@ -177,6 +229,7 @@ def generate_profile_candidate(
             "notes": str(notes_path),
         },
         "warnings": warnings,
+        "memory": memory,
         "qsf": qsf_payload,
         "inventory": inv.__dict__,
     }
@@ -191,6 +244,8 @@ def generate_profile_candidate(
         notes_path=notes_path,
         report_path=report_path,
         selected_shims=selected_shims,
+        selected_shim_details=selected_shim_details,
+        risks=risks,
         warnings=warnings,
         profile=profile,
         qsf=qsf_payload,
@@ -217,20 +272,97 @@ def load_catalog(path: Path) -> dict[str, dict[str, Any]]:
     return {str(entry.get("name")): entry for entry in entries if isinstance(entry, dict) and entry.get("name")}
 
 
-def select_shims(root: Path, inv: Any, catalog: dict[str, dict[str, Any]]) -> list[str]:
+def select_shims(root: Path, inv: Any, catalog: dict[str, dict[str, Any]], qsf_project: QsfProject | None = None) -> list[str]:
     selected: list[str] = []
+    source_paths = qsf_project.sources if qsf_project and qsf_project.sources else None
+    for name, entry in catalog.items():
+        if catalog_entry_matches(root, inv, entry, source_paths):
+            selected.append(name)
     return dedupe(selected)
+
+
+def catalog_entry_matches(root: Path, inv: Any, entry: dict[str, Any], source_paths: list[Path] | None = None) -> bool:
+    detect = entry.get("detect", {})
+    if not isinstance(detect, dict):
+        return False
+
+    for flag in detect.get("inventory_flags", []):
+        if bool(getattr(inv, str(flag), False)):
+            return True
+
+    wanted_memory = {str(item) for item in detect.get("memory_classes", [])}
+    if wanted_memory and wanted_memory.intersection(str(item) for item in getattr(inv, "memory_classes", [])):
+        return True
+
+    patterns = [str(item) for item in detect.get("source_patterns", [])]
+    if patterns and source_patterns_match(root, patterns, source_paths):
+        return True
+
+    return False
+
+
+def source_patterns_match(root: Path, patterns: list[str], source_paths: list[Path] | None = None) -> bool:
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern, re.IGNORECASE))
+        except re.error:
+            continue
+    if not compiled:
+        return False
+    paths = source_paths if source_paths is not None else hdl_paths(root)
+    for path in paths[:500]:
+        try:
+            text = path.read_text(errors="ignore")[:200000]
+        except OSError:
+            continue
+        if any(pattern.search(text) for pattern in compiled):
+            return True
+    return False
+
+
+def shim_detail_records(
+    selected: list[str],
+    catalog: dict[str, dict[str, Any]],
+    root: Path,
+    apfsim_dir: Path,
+    profile_name: str,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for name in selected:
+        entry = catalog.get(name, {})
+        catalog_source = select_catalog_source(entry, root)
+        fallback_used = not bool(catalog_source) and bool(entry.get("fallback_filelist_entries") or entry.get("fallback_required_paths"))
+        context = {"catalog_source": catalog_source, "profile": profile_name}
+        filelist_entries = [
+            filelist_entry_text(expand_template(str(value), root, apfsim_dir, context), root, apfsim_dir)
+            for value in selected_filelist_templates(entry, bool(catalog_source))
+        ]
+        records.append({
+            "name": name,
+            "description": str(entry.get("description", "")),
+            "kind": str(entry.get("kind", "")),
+            "confidence": str(entry.get("confidence", "")),
+            "modules": [str(item) for item in entry.get("modules", [])],
+            "memory_classes": [str(item) for item in entry.get("memory_classes", [])],
+            "diagnostic_codes": [str(item) for item in entry.get("diagnostic_codes", [])],
+            "catalog_source": catalog_source,
+            "fallback_used": fallback_used,
+            "filelist_entries": dedupe(filelist_entries),
+        })
+    return records
 
 
 def generated_filelist_entries(selected: list[str], catalog: dict[str, dict[str, Any]], root: Path, apfsim_dir: Path, profile_name: str) -> list[str]:
     out: list[str] = []
     for name in selected:
         entry = catalog.get(name, {})
-        context = {"catalog_source": select_catalog_source(entry, root), "profile": profile_name}
-        for value in entry.get("filelist_entries", []):
+        catalog_source = select_catalog_source(entry, root)
+        context = {"catalog_source": catalog_source, "profile": profile_name}
+        for value in selected_filelist_templates(entry, bool(catalog_source)):
             expanded = expand_template(str(value), root, apfsim_dir, context)
             if expanded:
-                out.append(relative_to_apfsim(expanded, apfsim_dir))
+                out.append(filelist_entry_text(expanded, root, apfsim_dir))
         for item in entry.get("generated_files", []):
             if isinstance(item, dict) and item.get("dest"):
                 out.append(relative_to_apfsim(expand_template(str(item["dest"]), root, apfsim_dir, context), apfsim_dir))
@@ -253,8 +385,9 @@ def required_paths_for_shims(selected: list[str], catalog: dict[str, dict[str, A
     out: list[str] = []
     for name in selected:
         entry = catalog.get(name, {})
-        context = {"catalog_source": select_catalog_source(entry, root), "profile": profile_name}
-        for value in entry.get("required_paths", []):
+        catalog_source = select_catalog_source(entry, root)
+        context = {"catalog_source": catalog_source, "profile": profile_name}
+        for value in selected_required_path_templates(entry, bool(catalog_source)):
             expanded = expand_template(str(value), root, apfsim_dir, context)
             if expanded:
                 out.append(expanded)
@@ -263,12 +396,72 @@ def required_paths_for_shims(selected: list[str], catalog: dict[str, dict[str, A
 
 def select_catalog_source(entry: dict[str, Any], root: Path) -> str:
     for candidate in entry.get("source_candidates", []):
-        text = os.path.expanduser(os.path.expandvars(str(candidate).replace("{root}", str(root))))
+        candidate_text = str(candidate)
+        text = os.path.expanduser(os.path.expandvars(candidate_text.replace("{root}", str(root))))
         path = Path(text)
         if path.exists():
-            return str(path)
-    candidates = entry.get("source_candidates", [])
-    return str(candidates[0]) if candidates else ""
+            return candidate_text
+    return ""
+
+
+def selected_filelist_templates(entry: dict[str, Any], has_catalog_source: bool) -> list[str]:
+    if not has_catalog_source and entry.get("fallback_filelist_entries"):
+        return [str(item) for item in entry.get("fallback_filelist_entries", [])]
+    return [str(item) for item in entry.get("filelist_entries", [])]
+
+
+def selected_required_path_templates(entry: dict[str, Any], has_catalog_source: bool) -> list[str]:
+    if not has_catalog_source and entry.get("fallback_required_paths"):
+        return [str(item) for item in entry.get("fallback_required_paths", [])]
+    return [str(item) for item in entry.get("required_paths", [])]
+
+
+def memory_with_catalog_models(memory: dict[str, Any], selected_shims: list[str], catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    doc = deepcopy(memory if isinstance(memory, dict) else {})
+    if not doc:
+        return doc
+    classes = {str(item) for item in doc.get("classes", [])}
+    selected_models: list[dict[str, str]] = []
+    covered_classes: set[str] = set()
+    models = doc.setdefault("models", {})
+    available = doc.get("available_models", {})
+    for name in selected_shims:
+        entry = catalog.get(name, {})
+        for cls in [str(item) for item in entry.get("memory_classes", [])]:
+            if cls not in classes:
+                continue
+            covered_classes.add(cls)
+            matching = [
+                item for item in available.get(cls, [])
+                if isinstance(item, dict) and item.get("catalog_entry") == name
+            ]
+            if matching:
+                model = dict(matching[0])
+                models[cls] = {
+                    "selected": str(model.get("model") or name),
+                    "confidence": str(model.get("confidence") or entry.get("confidence") or "sim_only"),
+                    "source": str(model.get("source") or ""),
+                    "notes": f"Selected by shim catalog entry {name}.",
+                }
+                selected_models.append({
+                    "class": cls,
+                    "catalog_entry": name,
+                    "model": str(model.get("model") or name),
+                    "confidence": str(model.get("confidence") or entry.get("confidence") or "sim_only"),
+                    "source": str(model.get("source") or ""),
+                })
+    if covered_classes:
+        doc["selected_model_classes"] = sorted(covered_classes)
+        doc["selected_models"] = selected_models
+        removable = {
+            code for cls, code in MEMORY_REQUIRED_RISK_BY_CLASS.items()
+            if cls in covered_classes
+        }
+        doc["risks"] = [
+            item for item in doc.get("risks", [])
+            if not (isinstance(item, dict) and item.get("code") in removable)
+        ]
+    return doc
 
 
 def expand_template(value: str, root: Path, apfsim_dir: Path, context: dict[str, str]) -> str:
@@ -284,6 +477,16 @@ def relative_to_apfsim(value: str, apfsim_dir: Path) -> str:
         return path.resolve().relative_to(apfsim_dir.resolve()).as_posix()
     except ValueError:
         return str(path)
+
+
+def filelist_entry_text(value: str, root: Path, apfsim_dir: Path) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(apfsim_dir.resolve()).as_posix()
+        except ValueError:
+            return placeholderize_path(path, root, apfsim_dir)
+    return value
 
 
 def placeholderize_value(value: str | Path, root: Path, apfsim_dir: Path) -> str:
@@ -366,7 +569,9 @@ def parse_qsf_like_file(path: Path, base: Path, project: QsfProject, seen_qips: 
         if not assignment:
             continue
         name, value = assignment
-        if name in QSF_RTL_ASSIGNMENTS:
+        if name in QSF_TOP_ASSIGNMENTS:
+            project.top_level_entity = value.strip('"')
+        elif name in QSF_RTL_ASSIGNMENTS:
             path = resolve_qsf_path(base, value)
             project.sources.append(path)
             if not path.exists():
@@ -511,9 +716,434 @@ def build_filelist(
 
 def file_order_key(path: Path) -> tuple[int, str]:
     name = path.name
-    if name == "core_top.sv" or name == "core_top.v":
+    if name in {"core_top.sv", "core_top.v", "pocket_top.sv", "pocket_top.v"}:
         return (9999, str(path))
     return (FRAMEWORK_PRIORITY.get(name, 100), str(path))
+
+
+def find_module_source(sources: list[Path], module_name: str) -> Path | None:
+    if not module_name:
+        return None
+    pattern = re.compile(r"\bmodule\s+" + re.escape(module_name) + r"\b")
+    for path in sources:
+        if path.suffix.lower() not in RTL_EXTS:
+            continue
+        try:
+            if pattern.search(path.read_text(errors="ignore")[:500000]):
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def maybe_generate_jtframe_pocket_wrapper(qsf_project: QsfProject, profile_dir: Path) -> dict[str, Any] | None:
+    if qsf_project.top_level_entity != "pocket_top":
+        return None
+    pocket_top = find_module_source(qsf_project.sources, "pocket_top")
+    jtframe_pocket = find_module_source(qsf_project.sources, "jtframe_pocket")
+    if not pocket_top or not jtframe_pocket:
+        return None
+    path = profile_dir / "apfsim_jtframe_pocket_wrapper.sv"
+    path.write_text(render_jtframe_pocket_wrapper())
+    return {
+        "schema": "apfsim.jtframe_pocket_logical_wrapper.v1",
+        "generated": True,
+        "top": "core_top",
+        "path": "{profile_dir}/apfsim_jtframe_pocket_wrapper.sv",
+        "kind": "logical_apf_wrapper",
+        "confidence": "public_jtframe_shell_bypass",
+        "source": str(jtframe_pocket),
+        "replaced_sources": [str(pocket_top)],
+        "memory_model": {
+            "class": "sdram",
+            "module": "apfsim_sdram_pin_model",
+            "counter_ports": [
+                "apfsim_sdram_read_count",
+                "apfsim_sdram_write_count",
+                "apfsim_sdram_activate_count",
+                "apfsim_sdram_refresh_count",
+                "apfsim_sdram_rom_preload_count",
+                "apfsim_sdram_rom_coverage_gap_count",
+                "apfsim_sdram_rom_mismatch_count",
+                "apfsim_sdram_rom_unwritten_read_count",
+                "apfsim_sdram_first_coverage_gap_addr",
+                "apfsim_sdram_first_rom_mismatch_addr",
+                "apfsim_sdram_first_rom_unwritten_read_addr",
+                "apfsim_sdram_first_rom_mismatch_expected",
+                "apfsim_sdram_first_rom_mismatch_actual",
+                "apfsim_sdram_first_rom_mismatch_dqm",
+                "apfsim_sdram_first_rom_unwritten_expected",
+                "apfsim_sdram_first_rom_unwritten_dqm",
+                "apfsim_sdram_command_error",
+                "apfsim_sdram_bus_contention_error",
+                "apfsim_sdram_byte_enable_error",
+                "apfsim_sdram_rom_mismatch_error",
+                "apfsim_sdram_uninitialized_read_error",
+            ],
+            "confidence": "pin_level_bringup",
+        },
+        "notes": (
+            "Bypasses physical Pocket SPI/PAD/scaler DDR shell and instantiates "
+            "jtframe_pocket on apfsim's logical APF bridge/controller/video/audio contract. "
+            "Wires a public SDRAM pin model so memory_activity can report live counters."
+        ),
+    }
+
+
+def render_jtframe_pocket_wrapper() -> str:
+    return r'''// Generated by apfsim generate-profile.
+// Public JTFRAME logical APF wrapper for Verilator bring-up.
+// This bypasses physical Pocket SPI/PAD/scaler DDR cells that are not part of
+// apfsim's logical APF contract.
+`timescale 1ns/1ps
+
+module core_top (
+    input  wire        clk_74a,
+    input  wire        clk_74b,
+    input  wire [31:0] bridge_addr,
+    input  wire        bridge_rd,
+    output wire [31:0] bridge_rd_data,
+    input  wire        bridge_wr,
+    input  wire [31:0] bridge_wr_data,
+    output wire        bridge_endian_little,
+    input  wire [31:0] cont1_key,
+    input  wire [31:0] cont2_key,
+    input  wire [31:0] cont3_key,
+    input  wire [31:0] cont4_key,
+    input  wire [31:0] cont1_joy,
+    input  wire [31:0] cont2_joy,
+    input  wire [31:0] cont3_joy,
+    input  wire [31:0] cont4_joy,
+    input  wire [15:0] cont1_trig,
+    input  wire [15:0] cont2_trig,
+    input  wire [15:0] cont3_trig,
+    input  wire [15:0] cont4_trig,
+    output reg         video_rgb_clock = 1'b0,
+    output reg         video_rgb_clock_90 = 1'b0,
+    output reg  [23:0] video_rgb,
+    output reg         video_de,
+    output reg         video_hs,
+    output reg         video_vs,
+    output wire        video_skip,
+    output wire        audio_mclk,
+    output wire        audio_lrck,
+    output wire        audio_dac,
+    output wire [31:0] apfsim_sdram_read_count,
+    output wire [31:0] apfsim_sdram_write_count,
+    output wire [31:0] apfsim_sdram_activate_count,
+    output wire [31:0] apfsim_sdram_refresh_count,
+    output wire [31:0] apfsim_sdram_rom_preload_count,
+    output wire [31:0] apfsim_sdram_rom_coverage_gap_count,
+    output wire [31:0] apfsim_sdram_rom_mismatch_count,
+    output wire [31:0] apfsim_sdram_rom_unwritten_read_count,
+    output wire [23:0] apfsim_sdram_first_coverage_gap_addr,
+    output wire [23:0] apfsim_sdram_first_rom_mismatch_addr,
+    output wire [23:0] apfsim_sdram_first_rom_unwritten_read_addr,
+    output wire [15:0] apfsim_sdram_first_rom_mismatch_expected,
+    output wire [15:0] apfsim_sdram_first_rom_mismatch_actual,
+    output wire [1:0]  apfsim_sdram_first_rom_mismatch_dqm,
+    output wire [15:0] apfsim_sdram_first_rom_unwritten_expected,
+    output wire [1:0]  apfsim_sdram_first_rom_unwritten_dqm,
+    output wire        apfsim_sdram_command_error,
+    output wire        apfsim_sdram_bus_contention_error,
+    output wire        apfsim_sdram_byte_enable_error,
+    output wire        apfsim_sdram_rom_mismatch_error,
+    output wire        apfsim_sdram_uninitialized_read_error
+);
+`ifdef JTFRAME_COLORW
+    localparam integer COLORW = `JTFRAME_COLORW;
+`else
+    localparam integer COLORW = 4;
+`endif
+`ifdef JTFRAME_WIDTH
+    localparam [15:0] VIDEO_WIDTH = `JTFRAME_WIDTH;
+`else
+    localparam [15:0] VIDEO_WIDTH = 16'd320;
+`endif
+`ifdef JTFRAME_HEIGHT
+    localparam [15:0] VIDEO_HEIGHT = `JTFRAME_HEIGHT;
+`else
+    localparam [15:0] VIDEO_HEIGHT = 16'd240;
+`endif
+
+    // JTFRAME's public bridge adapter swaps command/data words internally only
+    // when this is asserted. apfsim drives command words in APF register order,
+    // so keep the logical bridge big-endian here.
+    assign bridge_endian_little = 1'b0;
+    assign video_skip = 1'b0;
+
+    tri  [15:0] sdram_dq;
+    wire [12:0] sdram_a;
+    wire [1:0]  sdram_ba;
+    wire        sdram_dqml;
+    wire        sdram_dqmh;
+    wire        sdram_nwe;
+    wire        sdram_ncas;
+    wire        sdram_nras;
+    wire        sdram_ncs;
+    wire        sdram_clk;
+    wire        sdram_cke;
+    wire        apfsim_rom_preload_clk;
+    wire        apfsim_rom_preload_we;
+    wire [23:0] apfsim_rom_preload_prog_addr;
+    wire [23:0] apfsim_rom_preload_addr;
+    wire [15:0] apfsim_rom_preload_data;
+    wire [1:0]  apfsim_rom_preload_dqm;
+    wire        apfsim_sdram_command_cycle = sdram_cke && !sdram_ncs;
+    wire        apfsim_sdram_cmd_active = apfsim_sdram_command_cycle && !sdram_nras &&  sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_read =   apfsim_sdram_command_cycle &&  sdram_nras && !sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_write =  apfsim_sdram_command_cycle &&  sdram_nras && !sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_pre =    apfsim_sdram_command_cycle && !sdram_nras &&  sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_refresh = apfsim_sdram_command_cycle && !sdram_nras && !sdram_ncas &&  sdram_nwe;
+    wire        apfsim_sdram_cmd_mode =   apfsim_sdram_command_cycle && !sdram_nras && !sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_cmd_bterm =  apfsim_sdram_command_cycle &&  sdram_nras &&  sdram_ncas && !sdram_nwe;
+    wire        apfsim_sdram_stop_write = apfsim_sdram_cmd_active || apfsim_sdram_cmd_read ||
+                                           apfsim_sdram_cmd_pre || apfsim_sdram_cmd_refresh ||
+                                           apfsim_sdram_cmd_mode || apfsim_sdram_cmd_bterm;
+    reg  [3:0]  apfsim_sdram_burst_beats = 4'd8;
+    reg  [3:0]  apfsim_sdram_write_remaining = 4'd0;
+    wire        apfsim_sdram_write_drive = apfsim_sdram_cmd_write ||
+                                           ((apfsim_sdram_write_remaining != 4'd0) && !apfsim_sdram_stop_write);
+
+    wire [COLORW-1:0] core_r;
+    wire [COLORW-1:0] core_g;
+    wire [COLORW-1:0] core_b;
+    wire              core_hs;
+    wire              core_vs;
+    wire              core_lhbl;
+    wire              core_lvbl;
+    wire              core_pxl_cen;
+    wire              core_video_clk;
+    wire              core_video_clk_90;
+    wire              core_audio_clk;
+    wire signed [15:0] core_audio_l;
+    wire signed [15:0] core_audio_r;
+    wire              core_led;
+    wire [23:0]       core_debug_rgb;
+    wire [7:0]        core_debug_flags;
+
+    jtframe_pocket #(
+        .COLORW(COLORW),
+        .VIDEO_WIDTH(VIDEO_WIDTH),
+        .VIDEO_HEIGHT(VIDEO_HEIGHT)
+    ) u_core (
+        .clk_74a(clk_74a),
+        .clk_74b(clk_74b),
+        .reset_n(1'b1),
+        .bridge_endian_little(bridge_endian_little),
+        .bridge_addr(bridge_addr),
+        .bridge_wr_data(bridge_wr_data),
+        .bridge_wr(bridge_wr),
+        .bridge_rd(bridge_rd),
+        .bridge_rd_data(bridge_rd_data),
+        .cont1_key(cont1_key),
+        .cont2_key(cont2_key),
+        .cont3_key(cont3_key),
+        .cont4_key(cont4_key),
+        .cont1_joy(cont1_joy),
+        .cont2_joy(cont2_joy),
+        .cont3_joy(cont3_joy),
+        .cont4_joy(cont4_joy),
+        .cont1_trig(cont1_trig),
+        .cont2_trig(cont2_trig),
+        .cont3_trig(cont3_trig),
+        .cont4_trig(cont4_trig),
+        .SDRAM_DQ(sdram_dq),
+        .SDRAM_A(sdram_a),
+        .SDRAM_BA(sdram_ba),
+        .SDRAM_DQML(sdram_dqml),
+        .SDRAM_DQMH(sdram_dqmh),
+        .SDRAM_nWE(sdram_nwe),
+        .SDRAM_nCAS(sdram_ncas),
+        .SDRAM_nRAS(sdram_nras),
+        .SDRAM_nCS(sdram_ncs),
+        .SDRAM_CLK(sdram_clk),
+        .SDRAM_CKE(sdram_cke),
+        .video_r(core_r),
+        .video_g(core_g),
+        .video_b(core_b),
+        .video_hs(core_hs),
+        .video_vs(core_vs),
+        .video_lhbl(core_lhbl),
+        .video_lvbl(core_lvbl),
+        .video_pxl_cen(core_pxl_cen),
+        .video_rgb_clock(core_video_clk),
+        .video_rgb_clock_90(core_video_clk_90),
+        .audio_clk(core_audio_clk),
+        .audio_l(core_audio_l),
+        .audio_r(core_audio_r),
+        .led(core_led),
+        .pocket_debug_rgb(core_debug_rgb),
+        .pocket_debug_flags(core_debug_flags)
+    );
+
+    // Public JTFRAME keeps the bidirectional SDRAM bus tri-stated in simulated
+    // builds and exposes write data on the board SDRAM helper's `din` port.
+    // Drive the generated pin model from that sideband only while SDRAM write
+    // data is on the bus, so read data can still return through SDRAM_DQ.
+    assign sdram_dq = apfsim_sdram_write_drive ? u_core.u_board.u_sdram.din : 16'hZZZZ;
+
+    function automatic [3:0] apfsim_sdram_decode_burst_beats;
+        input [2:0] mode_bits;
+        begin
+            case (mode_bits)
+                3'b000: apfsim_sdram_decode_burst_beats = 4'd1;
+                3'b001: apfsim_sdram_decode_burst_beats = 4'd2;
+                3'b010: apfsim_sdram_decode_burst_beats = 4'd4;
+                3'b011: apfsim_sdram_decode_burst_beats = 4'd8;
+                default: apfsim_sdram_decode_burst_beats = 4'd8;
+            endcase
+        end
+    endfunction
+
+    always @(posedge sdram_clk) begin
+        if (apfsim_sdram_cmd_mode) begin
+            apfsim_sdram_burst_beats <= apfsim_sdram_decode_burst_beats(sdram_a[2:0]);
+        end
+        if (apfsim_sdram_cmd_write) begin
+            apfsim_sdram_write_remaining <= (apfsim_sdram_burst_beats > 4'd1) ?
+                                            (apfsim_sdram_burst_beats - 4'd1) : 4'd0;
+        end else if (apfsim_sdram_stop_write) begin
+            apfsim_sdram_write_remaining <= 4'd0;
+        end else if (apfsim_sdram_write_remaining != 4'd0) begin
+            apfsim_sdram_write_remaining <= apfsim_sdram_write_remaining - 4'd1;
+        end
+    end
+
+    assign apfsim_rom_preload_clk = u_core.clk_sys;
+    assign apfsim_rom_preload_we = u_core.prog_we && u_core.prog_ack;
+    assign apfsim_rom_preload_prog_addr = 24'(u_core.prog_addr);
+    assign apfsim_rom_preload_addr = {u_core.prog_ba, apfsim_rom_preload_prog_addr[21:0]};
+    assign apfsim_rom_preload_data = u_core.prog_data;
+    assign apfsim_rom_preload_dqm = u_core.prog_mask;
+
+    apfsim_sdram_pin_model #(
+        .ADDR_WIDTH(24),
+        .COL_WIDTH(9),
+        .CAS_LATENCY(2),
+        .DEFAULT_BURST_LENGTH(8)
+    ) u_apfsim_sdram (
+        .Clk(sdram_clk),
+        .Cke(sdram_cke),
+        .Dq(sdram_dq),
+        .Addr(sdram_a),
+        .Ba(sdram_ba),
+        .Cs_n(sdram_ncs),
+        .Ras_n(sdram_nras),
+        .Cas_n(sdram_ncas),
+        .We_n(sdram_nwe),
+        .Dqm({sdram_dqmh, sdram_dqml}),
+        .preload_clk(apfsim_rom_preload_clk),
+        .preload_we(apfsim_rom_preload_we),
+        .preload_addr(apfsim_rom_preload_addr),
+        .preload_data(apfsim_rom_preload_data),
+        .preload_dqm(apfsim_rom_preload_dqm),
+        .read_count(apfsim_sdram_read_count),
+        .write_count(apfsim_sdram_write_count),
+        .activate_count(apfsim_sdram_activate_count),
+        .refresh_count(apfsim_sdram_refresh_count),
+        .preload_count(apfsim_sdram_rom_preload_count),
+        .coverage_gap_count(apfsim_sdram_rom_coverage_gap_count),
+        .rom_mismatch_count(apfsim_sdram_rom_mismatch_count),
+        .rom_unwritten_read_count(apfsim_sdram_rom_unwritten_read_count),
+        .first_coverage_gap_addr(apfsim_sdram_first_coverage_gap_addr),
+        .first_rom_mismatch_addr(apfsim_sdram_first_rom_mismatch_addr),
+        .first_rom_unwritten_read_addr(apfsim_sdram_first_rom_unwritten_read_addr),
+        .first_rom_mismatch_expected(apfsim_sdram_first_rom_mismatch_expected),
+        .first_rom_mismatch_actual(apfsim_sdram_first_rom_mismatch_actual),
+        .first_rom_mismatch_dqm(apfsim_sdram_first_rom_mismatch_dqm),
+        .first_rom_unwritten_expected(apfsim_sdram_first_rom_unwritten_expected),
+        .first_rom_unwritten_dqm(apfsim_sdram_first_rom_unwritten_dqm),
+        .command_error(apfsim_sdram_command_error),
+        .bus_contention_error(apfsim_sdram_bus_contention_error),
+        .byte_enable_error(apfsim_sdram_byte_enable_error),
+        .rom_mismatch_error(apfsim_sdram_rom_mismatch_error),
+        .uninitialized_read_error(apfsim_sdram_uninitialized_read_error)
+    );
+
+    function automatic [7:0] expand8;
+        input [31:0] in;
+        begin
+            expand8 = 8'd0;
+            case (COLORW)
+                1: expand8 = {8{in[0]}};
+                2: expand8 = {4{in[1:0]}};
+                3: expand8 = {in[2:0], in[2:0], in[2:1]};
+                4: expand8 = {2{in[3:0]}};
+                5: expand8 = {in[4:0], in[4:2]};
+                6: expand8 = {in[5:0], in[5:4]};
+                7: expand8 = {in[6:0], in[6]};
+                default: expand8 = in[7:0];
+            endcase
+        end
+    endfunction
+
+    wire [31:0] core_r_ext = 32'(core_r);
+    wire [31:0] core_g_ext = 32'(core_g);
+    wire [31:0] core_b_ext = 32'(core_b);
+    wire [23:0] video_rgb_raw = {expand8(core_r_ext), expand8(core_g_ext), expand8(core_b_ext)};
+    reg hs_prev = 1'b0;
+    reg vs_prev = 1'b0;
+    reg lhbl_crop_prev = 1'b0;
+    reg [15:0] video_crop_x = 16'd0;
+    reg [15:0] video_crop_y = 16'd0;
+    wire core_de_raw = core_lhbl & core_lvbl;
+    wire core_de_cropped = core_de_raw &&
+                           video_crop_x < VIDEO_WIDTH &&
+                           video_crop_y < VIDEO_HEIGHT;
+
+    always @(posedge core_video_clk) begin
+        // JTFRAME advances the visible stream on video_pxl_cen while the
+        // physical Pocket shell forwards the faster PLL clock. For apfsim's
+        // logical APF contract, present a pixel-clock pulse only when a new
+        // pixel is valid so shape discovery observes the actual active area.
+        video_rgb_clock <= core_pxl_cen;
+        video_rgb_clock_90 <= core_pxl_cen;
+        if (core_pxl_cen) begin
+            video_de <= core_de_cropped;
+            video_rgb <= core_de_cropped ? video_rgb_raw : 24'h0;
+            video_hs <= ~hs_prev & core_hs;
+            video_vs <= ~vs_prev & core_vs;
+            hs_prev <= core_hs;
+            vs_prev <= core_vs;
+
+            if (!core_lvbl) begin
+                video_crop_x <= 16'd0;
+                video_crop_y <= 16'd0;
+                lhbl_crop_prev <= 1'b0;
+            end else begin
+                if (core_lhbl) begin
+                    video_crop_x <= video_crop_x + 16'd1;
+                end else begin
+                    video_crop_x <= 16'd0;
+                end
+
+                if (lhbl_crop_prev && !core_lhbl) begin
+                    video_crop_y <= video_crop_y + 16'd1;
+                end
+                lhbl_crop_prev <= core_lhbl;
+            end
+        end
+    end
+
+    jtframe_pocket_sound_i2s u_sound_i2s (
+        .clk_74a(clk_74a),
+        .clk_audio(core_audio_clk),
+        .reset(1'b0),
+        .audio_l(core_audio_l),
+        .audio_r(core_audio_r),
+        .audio_mclk(audio_mclk),
+        .audio_lrck(audio_lrck),
+        .audio_dac(audio_dac)
+    );
+
+    wire _unused = &{
+        sdram_a, sdram_ba, sdram_dqml, sdram_dqmh, sdram_nwe, sdram_ncas,
+        sdram_nras, sdram_ncs, sdram_clk, sdram_cke, sdram_dq, core_pxl_cen,
+        core_led, core_debug_rgb, core_debug_flags
+    };
+endmodule
+'''
 
 
 def first_existing(root: Path, rels: list[str]) -> Path | None:
@@ -536,7 +1166,7 @@ def build_scenario(root: Path, data_json: Path | None, video_json: Path | None, 
             parsed = scenario_slot(root, slot, apfsim_dir)
             if parsed:
                 slots.append(parsed)
-                if parsed.get("file") and not parsed.get("nonvolatile"):
+                if parsed.get("file") and not parsed.get("nonvolatile") and not parsed.get("deferload"):
                     try:
                         total_loaded += Path(str(parsed["file"])).stat().st_size
                     except OSError:
@@ -556,7 +1186,10 @@ def build_scenario(root: Path, data_json: Path | None, video_json: Path | None, 
             lines.append(f"    name: {quote_yaml(str(slot.get('name') or 'SLOT'))}")
             if slot.get("file"):
                 lines.append(f"    file: {quote_yaml(placeholderize_value(str(slot['file']), root, apfsim_dir))}")
-            lines.append(f"    address: 0x{int(slot['address']):08X}")
+            if slot.get("has_address", True):
+                lines.append(f"    address: 0x{int(slot['address']):08X}")
+            if slot.get("setup_only"):
+                lines.append("    setup_only: true")
             if slot.get("required") is not None:
                 lines.append(f"    required: {str(bool(slot['required'])).lower()}")
             if slot.get("nonvolatile"):
@@ -604,10 +1237,16 @@ def build_scenario(root: Path, data_json: Path | None, video_json: Path | None, 
 def scenario_slot(root: Path, slot: dict[str, Any], apfsim_dir: Path) -> dict[str, Any] | None:
     slot_id = int_value(slot.get("id", slot.get("slot")))
     address = int_value(slot.get("address", slot.get("loadaddress", slot.get("load_address"))))
-    if slot_id is None or address is None:
+    if slot_id is None:
         return None
+    setup_only = False
+    if address is None:
+        if not is_setup_only_slot(slot):
+            return None
+        address = 0
+        setup_only = True
     nonvolatile = bool(slot.get("nonvolatile") or slot.get("save") or slot.get("savefile"))
-    deferload = bool(slot.get("deferload") or slot.get("deferred") or slot.get("defer"))
+    deferload = setup_only or bool(slot.get("deferload") or slot.get("deferred") or slot.get("defer"))
     file_path = None
     if nonvolatile:
         candidate = apfsim_dir / "examples/assets/mock.hi"
@@ -619,16 +1258,28 @@ def scenario_slot(root: Path, slot: dict[str, Any], apfsim_dir: Path) -> dict[st
         "id": slot_id,
         "name": slot.get("name") or f"SLOT{slot_id}",
         "address": address,
+        "has_address": not setup_only,
+        "setup_only": setup_only,
         "required": bool(slot.get("required", True)),
         "nonvolatile": nonvolatile,
         "deferload": deferload,
     }
     if file_path:
         out["file"] = file_path
-        if not nonvolatile:
+        if not nonvolatile and not deferload:
             checksum = fnv1a64(Path(file_path).read_bytes())
             out["expected_checksum"] = checksum
     return out
+
+
+def is_setup_only_slot(slot: dict[str, Any]) -> bool:
+    parameters = int_value(slot.get("parameters"))
+    extensions = [str(ext).lower().lstrip(".") for ext in slot.get("extensions", []) if str(ext)]
+    filename = str(slot.get("filename") or slot.get("file") or "").lower()
+    name = str(slot.get("name") or "").lower()
+    instance_json = bool(parameters is not None and (parameters & (1 << 4)))
+    json_named = "json" in extensions or filename.endswith(".json") or "json" in name or "setup" in name
+    return instance_json or json_named
 
 
 def match_asset(root: Path, slot: dict[str, Any]) -> str | None:
@@ -665,12 +1316,40 @@ def first_video_mode(video_json: Path | None) -> tuple[int, int]:
     return modes[0] if modes else (0, 0)
 
 
+def profile_risks(inv: Any, selected_shims: list[str], qsf_project: QsfProject | None = None) -> list[dict[str, Any]]:
+    risks: list[dict[str, Any]] = []
+    qsf_vhdl_count = len(qsf_project.vhdl_files) if qsf_project else 0
+    if inv.vhdl_files or qsf_vhdl_count:
+        risks.append({
+            "code": "VHDL_ENTITY_STUBBED",
+            "severity": "warning",
+            "kind": "mixed_hdl",
+            "message": "VHDL sources were detected but generated Verilator profiles do not compile VHDL directly.",
+            "evidence": {
+                "discovered_vhdl_files": inv.vhdl_files,
+                "qsf_vhdl_files": qsf_vhdl_count,
+            },
+            "recommended_action": "Provide translated RTL, a faithful SystemVerilog shim, or an explicit mixed-language strategy before treating gameplay behavior as verified.",
+        })
+    if not selected_shims and (inv.uses_pll or inv.uses_altsyncram or inv.uses_dcfifo or inv.qip_files):
+        risks.append({
+            "code": "SHIM_REQUIRED",
+            "severity": "warning",
+            "kind": "vendor_ip",
+            "message": "Vendor/IP usage was detected without a selected shim catalog entry.",
+            "recommended_action": "Add a deterministic simulation shim or catalog entry for each non-Verilator-friendly primitive.",
+        })
+    return risks
+
+
 def generation_warnings(
     inv: Any,
     selected_shims: list[str],
     filelist_lines: list[str],
     qsf_project: QsfProject | None = None,
     excluded_sources: set[Path] | None = None,
+    memory: dict[str, Any] | None = None,
+    expected_top: str | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     if inv.status not in {"candidate", "needs-ip-shims", "profiled"}:
@@ -683,14 +1362,17 @@ def generation_warnings(
             warnings.append(f"QSF references {len(qsf_project.missing_sources)} missing RTL source(s)")
         if qsf_project.qip_files:
             warnings.append("QSF references QIP/IP files; verify corresponding Verilator shims or public implementations")
-    if inv.vhdl_files:
+    if inv.vhdl_files or (qsf_project and qsf_project.vhdl_files):
         warnings.append("VHDL files were detected; generated Verilog profile may need public stubs or mixed-language strategy")
-    if inv.uses_sdram or inv.uses_ddr:
-        warnings.append("SDRAM/DDR usage detected; verify behavioral memory model and timing expectations")
+    memory_doc = memory if isinstance(memory, dict) else inv.memory
+    for risk in memory_doc.get("risks", []):
+        if isinstance(risk, dict) and risk.get("code"):
+            warnings.append(f"{risk['code']}: {risk.get('message', 'memory model risk')}")
     if not selected_shims and (inv.uses_pll or inv.uses_altsyncram or inv.uses_dcfifo or inv.qip_files):
         warnings.append("vendor/IP usage detected; filelist includes generic shims but may need catalog entries")
-    if not any(line.endswith("core_top.sv") or line.endswith("core_top.v") for line in filelist_lines):
-        warnings.append("core_top was not found in generated filelist")
+    expected_top = expected_top or (qsf_project.top_level_entity if qsf_project and qsf_project.top_level_entity else "core_top")
+    if not any(line.endswith(f"{expected_top}.sv") or line.endswith(f"{expected_top}.v") for line in filelist_lines):
+        warnings.append(f"{expected_top} was not found in generated filelist")
     return warnings
 
 
@@ -700,6 +1382,7 @@ def qsf_report(qsf_project: QsfProject | None, excluded_sources: set[Path] | Non
     source_paths, skipped = filter_hdl_paths(qsf_project.sources, excluded_sources)
     return {
         "path": str(qsf_project.path),
+        "top_level_entity": qsf_project.top_level_entity,
         "source_count": len(qsf_project.sources),
         "verilator_source_count": len(source_paths),
         "include_dirs": [str(path) for path in qsf_project.include_dirs],
@@ -714,7 +1397,7 @@ def qsf_report(qsf_project: QsfProject | None, excluded_sources: set[Path] | Non
 def render_notes(
     inv: Any,
     profile: dict[str, Any],
-    selected_shims: list[str],
+    selected_shim_details: list[dict[str, Any]],
     warnings: list[str],
     profile_path: Path,
     filelist_path: Path,
@@ -749,6 +1432,7 @@ def render_notes(
         source_paths, skipped = filter_hdl_paths(qsf_project.sources, excluded_sources)
         lines.extend([
             f"- QSF: `{qsf_project.path}`",
+            f"- Top-level entity: `{qsf_project.top_level_entity or 'not specified'}`",
             f"- Verilator RTL sources from QSF: {len(source_paths)} / {len(qsf_project.sources)}",
             f"- Defines: {', '.join(qsf_project.defines) or '-'}",
             f"- Include/search paths: {len(qsf_project.include_dirs)}",
@@ -766,8 +1450,11 @@ def render_notes(
         "## Shim Catalog Entries",
         "",
     ])
-    if selected_shims:
-        lines.extend(f"- `{name}`" for name in selected_shims)
+    if selected_shim_details:
+        for shim in selected_shim_details:
+            modules = ", ".join(str(item) for item in shim.get("modules", [])) or "-"
+            label = f"{shim.get('kind') or 'shim'}/{shim.get('confidence') or 'unknown'}"
+            lines.append(f"- `{shim['name']}` ({label}): {modules}")
     else:
         lines.append("- none")
     lines.extend(["", "## Warnings", ""])

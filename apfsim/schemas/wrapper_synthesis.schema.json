@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/wrapper_synthesis.schema.json",
+  "title": "apfsim wrapper synthesis report",
+  "type": "object",
+  "required": ["schema", "status", "confidence", "mappings", "blockers", "paths"],
+  "properties": {
+    "schema": { "const": "apfsim.wrapper_synthesis.v1" },
+    "profile": { "type": "string" },
+    "root": { "type": "string" },
+    "status": { "enum": ["ready", "partial", "blocked"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "source_top": { "type": "string" },
+    "source_file": { "type": "string" },
+    "mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["apf_signal", "source", "confidence"],
+        "properties": {
+          "apf_signal": { "type": "string" },
+          "source": { "type": "string" },
+          "expression": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "risk": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "profile": { "type": "string" },
+        "filelist": { "type": "string" },
+        "scenario": { "type": "string" },
+        "wrapper": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "qsf": { "type": ["object", "null"], "additionalProperties": true },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

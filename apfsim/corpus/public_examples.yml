@@ -1,0 +1,29 @@
+schema: apfsim.corpus_manifest.v1
+defaults:
+  timeout: 240
+  family: public-example
+cores:
+  - name: mock
+    profile: mock
+    family: contract-test
+  - name: mock_port_gate
+    profile: mock_port_gate
+    family: contract-test
+  - name: mock_rom_stress
+    profile: mock_rom_stress
+    family: contract-test
+  - name: core_template
+    profile: core_template
+    family: official-template
+  - name: core_example_interact
+    profile: interact
+    family: official-template
+  - name: core_example_kbmouse_targetdata
+    profile: kbmouse_targetdata
+    family: official-template
+  - name: core_example_basicassets
+    profile: basicassets
+    family: official-template
+  - name: core_example_basicchip32
+    profile: basicchip32
+    family: official-template

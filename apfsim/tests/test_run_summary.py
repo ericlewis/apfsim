@@ -1,0 +1,237 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / "bin" / "apfsim"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from run_summary import summarize_run, write_summary
+
+
+def write_json(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def make_artifacts(root: Path):
+    write_json(root / "result.json", {
+        "ok": True,
+        "video_shape": {
+            "active_width": 256,
+            "active_height": 224,
+            "frames_considered": 3,
+            "startup_frames_ignored": 1,
+            "protocol_valid": True,
+        },
+        "video_protocol": {"valid": True, "first_error_cycle": 0},
+        "video": {"changed_after_input": True, "changed_frames_after_input": 1, "max_changed_pixels_after_input": 512},
+        "input_video_response": {
+            "name": "after_input",
+            "changed": True,
+            "changed_frames": 1,
+            "max_changed_pixels": 512,
+            "required": True,
+            "pass": True,
+        },
+        "input_video_effect_seen": True,
+        "video_activity": {
+            "schema": "apfsim.video_activity.v1",
+            "input_response": {
+                "name": "after_input",
+                "changed": True,
+                "changed_frames": 1,
+                "max_changed_pixels": 512,
+                "required": True,
+                "pass": True,
+            },
+            "phases": [
+                {"name": "attract", "required": False, "pass": True},
+                {"name": "gameplay", "required": True, "pass": True, "changed": True},
+            ],
+        },
+        "audio": {
+            "activity": "active",
+            "samples": 100,
+            "nonzero_samples": 99,
+            "peak": 1234,
+            "active_after_input": True,
+            "samples_after_input": 40,
+            "nonzero_samples_after_input": 39,
+            "peak_after_input": 900,
+        },
+        "input_audio_response": {
+            "name": "after_input",
+            "active": True,
+            "samples": 40,
+            "nonzero_samples": 39,
+            "peak": 900,
+            "required": True,
+            "pass": True,
+        },
+        "input_audio_effect_seen": True,
+        "audio_activity": {
+            "schema": "apfsim.audio_activity.v1",
+            "input_response": {
+                "name": "after_input",
+                "active": True,
+                "samples": 40,
+                "nonzero_samples": 39,
+                "peak": 900,
+                "required": True,
+                "pass": True,
+            },
+        },
+        "data_load": {
+            "total_loaded_bytes": 1024,
+            "slots": [{"id": 1, "loaded_bytes": 1024, "crc": "0x12345678"}],
+        },
+        "input": {"input_effect_seen": True},
+        "input_effect_seen": True,
+        "interact_readback": {"verified": True},
+        "reset_action_seen": True,
+    })
+    write_json(root / "diagnostics.json", {
+        "schema": "apfsim.diagnostics.v1",
+        "status": "pass",
+        "summary": {"errors": 0, "warnings": 1, "infos": 0},
+        "diagnostics": [{"code": "VIDEO_STATIC_FRAME", "severity": "warning"}],
+    })
+    write_json(root / "package_check.json", {
+        "schema": "apfsim.package_check.v1",
+        "ok": True,
+        "package_errors": [],
+        "package_warnings": [],
+    })
+    write_json(root / "source_provenance.json", {
+        "schema": "apfsim.source_provenance.v1",
+        "shimmed_modules": [{
+            "name": "intel_bram_shims",
+            "kind": "behavioral_model",
+            "confidence": "sim_only",
+            "modules": ["altsyncram"],
+        }],
+        "memory_dependencies": {
+            "schema": "apfsim.memory_dependencies.v1",
+            "required": True,
+            "classes": ["sdram", "bram"],
+            "external_classes": ["sdram"],
+            "models": {
+                "sdram": {"selected": "ideal_transactional", "confidence": "bringup_only", "source": "rtl_shims/sdram_sim.sv"}
+            },
+            "risks": [{"code": "SDRAM_TIMING_NOT_POCKET_LIKE", "severity": "warning"}],
+        },
+        "memory_models": [
+            {"class": "sdram", "model": "ideal_transactional", "confidence": "bringup_only", "source": "rtl_shims/sdram_sim.sv"}
+        ],
+    })
+    write_json(root / "memory_activity.json", {
+        "schema": "apfsim.memory_activity.v1",
+        "profile": "fake",
+        "observed": True,
+        "classes": ["sdram", "bram"],
+        "external_classes": ["sdram"],
+        "models": [],
+        "counter_status": "observed",
+        "rom_validation": {
+            "schema": "apfsim.memory_rom_validation.v1",
+            "first_error": {
+                "code": "MEMORY_ROM_WRITE_MISMATCH",
+                "first_addr": 4,
+                "byte_lanes": {"names": ["high"]},
+                "source": {
+                    "slot_id": 1,
+                    "file": "game.rom",
+                    "source_offset": 8,
+                },
+            },
+            "events": [],
+        },
+        "counters": [
+            {"name": "sdram_read_count", "class": "sdram", "value": 10, "error": False},
+            {"name": "sdram_overrun_error", "class": "sdram", "value": 1, "error": True},
+        ],
+        "errors": [{"code": "SDRAM_INIT_TIMEOUT", "severity": "error", "observed": False, "counter": "sdram_overrun_error"}],
+    })
+
+
+def test_summarize_run_flattens_artifacts(tmp_path):
+    artifacts = tmp_path / "run"
+    make_artifacts(artifacts)
+
+    doc = summarize_run(artifacts)
+
+    assert doc["schema"] == "apfsim.run_summary.v1"
+    assert doc["ok"] is True
+    row = doc["row"]
+    assert row["active_width"] == 256
+    assert row["active_height"] == 224
+    assert row["frames_considered"] == 3
+    assert row["audio_activity"] == "active"
+    assert row["input_audio_effect_seen"] is True
+    assert row["audio_active_after_input"] is True
+    assert row["audio_samples_after_input"] == 40
+    assert row["audio_nonzero_samples_after_input"] == 39
+    assert row["audio_peak_after_input"] == 900
+    assert row["data_crc_list"] == ["0x12345678"]
+    assert row["input_video_effect_seen"] is True
+    assert row["video_changed_after_input"] is True
+    assert row["video_changed_frames_after_input"] == 1
+    assert row["video_max_changed_pixels_after_input"] == 512
+    assert row["video_activity_phase_failures"] == []
+    assert row["shimmed_modules"] == ["intel_bram_shims"]
+    assert row["shim_kinds"] == ["intel_bram_shims:behavioral_model"]
+    assert row["shim_confidences"] == ["intel_bram_shims:sim_only"]
+    assert row["memory_classes"] == ["sdram", "bram"]
+    assert row["memory_models"] == ["sdram:ideal_transactional"]
+    assert row["memory_risks"] == ["SDRAM_TIMING_NOT_POCKET_LIKE"]
+    assert row["memory_activity_observed"] is True
+    assert row["memory_counter_status"] == "observed"
+    assert row["memory_counter_names"] == ["sdram_read_count", "sdram_overrun_error"]
+    assert row["memory_error_counter_names"] == ["sdram_overrun_error"]
+    assert row["memory_error_codes"] == ["SDRAM_INIT_TIMEOUT"]
+    assert row["memory_rom_error_code"] == "MEMORY_ROM_WRITE_MISMATCH"
+    assert row["memory_rom_error_slot_id"] == "1"
+    assert row["memory_rom_error_file"] == "game.rom"
+    assert row["memory_rom_error_source_offset"] == 8
+    assert row["memory_rom_error_address"] == 4
+    assert row["memory_rom_error_byte_lanes"] == ["high"]
+    assert doc["source_provenance"]["shim_details"][0]["modules"] == ["altsyncram"]
+    assert doc["source_provenance"]["memory_activity"]["schema"] == "apfsim.memory_activity.v1"
+    assert doc["source_provenance"]["memory_rom_validation"]["schema"] == "apfsim.memory_rom_validation.v1"
+    assert doc["video"]["changed_after_input"] is True
+    assert doc["audio"]["active_after_input"] is True
+
+
+def test_write_summary_emits_json_and_tsv(tmp_path):
+    artifacts = tmp_path / "run"
+    make_artifacts(artifacts)
+
+    doc = write_summary(artifacts)
+
+    assert doc["ok"] is True
+    assert (artifacts / "summary.json").exists()
+    tsv = (artifacts / "summary.tsv").read_text()
+    assert "first_error_code" in tsv.splitlines()[0]
+    assert "0x12345678" in tsv
+
+
+def test_summarize_run_cli(tmp_path):
+    artifacts = tmp_path / "run"
+    make_artifacts(artifacts)
+    out = tmp_path / "summary.json"
+    tsv = tmp_path / "summary.tsv"
+
+    r = subprocess.run(
+        [str(CLI), "summarize-run", str(artifacts), "--json-out", str(out), "--tsv-out", str(tsv), "--strict"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert out.exists()
+    assert tsv.exists()
+    assert "summary: ok=True" in r.stdout

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/memory_activity.schema.json",
+  "title": "apfsim memory activity report",
+  "type": "object",
+  "required": ["schema", "profile", "observed", "classes", "models", "counters", "errors"],
+  "properties": {
+    "schema": { "const": "apfsim.memory_activity.v1" },
+    "profile": { "type": "string" },
+    "observed": { "type": "boolean" },
+    "classes": { "type": "array", "items": { "type": "string" } },
+    "external_classes": { "type": "array", "items": { "type": "string" } },
+    "models": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "selected_shims": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "wrapper_generation": { "type": "object", "additionalProperties": true },
+    "rom_regions": {
+      "description": "Exact profile-declared ROM/source-file regions in external RAM address space.",
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "counters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "integer" },
+          "observed": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string" },
+          "message": { "type": "string" },
+          "observed": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "rom_validation": {
+      "type": "object",
+      "properties": {
+        "schema": { "const": "apfsim.memory_rom_validation.v1" },
+        "events": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "first_error": { "type": ["object", "null"], "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

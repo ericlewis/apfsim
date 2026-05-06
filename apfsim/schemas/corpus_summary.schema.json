@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/apfsim/corpus_summary.schema.json",
+  "title": "apfsim corpus summary",
+  "type": "object",
+  "required": ["schema", "ok", "totals", "cores"],
+  "properties": {
+    "schema": {"const": "apfsim.corpus_summary.v1"},
+    "manifest": {"type": "string"},
+    "out_dir": {"type": "string"},
+    "ok": {"type": "boolean"},
+    "totals": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "skipped"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "status_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "family_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "top_blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "count"],
+        "properties": {
+          "code": {"type": "string"},
+          "count": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "cores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "ok", "artifact_dir"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"enum": ["passed", "failed", "skipped", "pending"]},
+          "ok": {"type": "boolean"},
+          "returncode": {"type": ["integer", "null"]},
+          "stage": {"type": "string"},
+          "stop_stage": {"type": "string"},
+          "family": {"type": "string"},
+          "profile": {"type": "string"},
+          "root": {"type": "string"},
+          "rom": {"type": "string"},
+          "expected_platform_id": {"type": "string"},
+          "first_error_code": {"type": "string"},
+          "blocking_codes": {"type": "array", "items": {"type": "string"}},
+          "warning_codes": {"type": "array", "items": {"type": "string"}},
+          "shim_kinds": {"type": "array", "items": {"type": "string"}},
+          "shim_confidences": {"type": "array", "items": {"type": "string"}},
+          "memory_classes": {"type": "array", "items": {"type": "string"}},
+          "memory_models": {"type": "array", "items": {"type": "string"}},
+          "memory_risks": {"type": "array", "items": {"type": "string"}},
+          "artifact_dir": {"type": "string"},
+          "run_dir": {"type": "string"},
+          "summary_path": {"type": "string"},
+          "package_check_path": {"type": "string"},
+          "skip_reason": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

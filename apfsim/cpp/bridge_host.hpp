@@ -368,13 +368,17 @@ public:
             slot->loaded_words = (slot->loaded_size + 3) / 4;
             slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
             slot->loaded_checksum = fnv1a64(slot->image);
+            slot->loaded_crc32 = crc32(slot->image);
         }
         if (has_explicit_size) {
             slot->loaded_size = static_cast<size_t>(explicit_size);
             slot->loaded_words = (slot->loaded_size + 3) / 4;
             slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
             if (slot->image.size() < slot->loaded_size) slot->image.resize(slot->loaded_size, 0);
-            if (!slot->image.empty()) slot->loaded_checksum = fnv1a64(slot->image);
+            if (!slot->image.empty()) {
+                slot->loaded_checksum = fnv1a64(slot->image);
+                slot->loaded_crc32 = crc32(slot->image);
+            }
         }
         if (update_slot_table) write_slot_table_entry(slots, slot_id);
         ++stats_.runtime_dataslot_updates;
@@ -434,13 +438,39 @@ public:
     }
 
     void load_slot(DataSlot& slot) {
-        if (slot.deferload || slot.file.empty()) return;
+        slot.load_error.clear();
+        if (slot.deferload) {
+            slot.load_status = "deferload";
+            return;
+        }
+        if (slot.file.empty()) {
+            slot.load_status = slot.required ? "required_file_unspecified" : "no_file";
+            if (slot.required && slot.has_address) slot.load_error = "required slot file was not specified";
+            return;
+        }
+        if (!slot.has_address) {
+            slot.load_status = "no_address";
+            return;
+        }
+        if (!std::filesystem::exists(slot.file)) {
+            slot.load_status = slot.required ? "required_file_missing" : "optional_file_missing";
+            if (slot.required) {
+                slot.load_error = "required slot " + std::to_string(slot.id) + " file not found: " + slot.file.string();
+                throw std::runtime_error(slot.load_error);
+            }
+            log_event("DATASLOT optional file missing id=" + std::to_string(slot.id) + " file=" + slot.file.string());
+            return;
+        }
         const auto bytes = read_binary_file(slot.file);
         if (slot.size_exact && bytes.size() != slot.size_exact) {
-            throw std::runtime_error("slot " + std::to_string(slot.id) + " size mismatch");
+            slot.load_status = "size_exact_mismatch";
+            slot.load_error = "slot " + std::to_string(slot.id) + " size mismatch";
+            throw std::runtime_error(slot.load_error);
         }
         if (slot.size_maximum && bytes.size() > slot.size_maximum) {
-            throw std::runtime_error("slot " + std::to_string(slot.id) + " exceeds maximum size");
+            slot.load_status = "size_maximum_exceeded";
+            slot.load_error = "slot " + std::to_string(slot.id) + " exceeds maximum size";
+            throw std::runtime_error(slot.load_error);
         }
         slot.loaded_size = bytes.size();
         slot.loaded_words = (bytes.size() + 3) / 4;
@@ -449,14 +479,28 @@ public:
         slot.observed_first_write_address = 0;
         slot.observed_last_write_address = 0;
         slot.observed_write_address_errors = 0;
+        slot.readback_attempted = false;
+        slot.readback_matches = false;
+        slot.readback_bytes = 0;
+        slot.readback_crc32 = 0;
+        slot.readback_checksum = 0;
+        slot.readback_mismatch_count = 0;
+        slot.readback_first_mismatch_offset = 0;
+        slot.readback_has_first_mismatch = false;
+        slot.readback_expected_byte = 0;
+        slot.readback_observed_byte = 0;
         slot.loaded_checksum = fnv1a64(bytes);
+        slot.loaded_crc32 = crc32(bytes);
         slot.image = bytes;
+        slot.load_status = "loading";
         log_event("DATASLOT load begin id=" + std::to_string(slot.id) + " bytes=" + std::to_string(bytes.size()) +
                   " address=" + hex32(slot.address) + " file=" + slot.file.string());
         host_command(apf::kDataSlotRequestWrite, slot.id, static_cast<uint32_t>(bytes.size()), slot.address, 0);
         active_load_slot_ = &slot;
         burst_write(slot.address, bytes);
         active_load_slot_ = nullptr;
+        if (slot.verify_readback) verify_loaded_slot_readback(slot, bytes);
+        slot.load_status = "loaded";
         log_event("DATASLOT load done id=" + std::to_string(slot.id) + " writes32=" + std::to_string((bytes.size() + 3) / 4));
         std::cout << "PASS data: slot " << slot.id << " loaded " << bytes.size() << " bytes at " << hex32(slot.address) << "\n";
     }
@@ -477,7 +521,7 @@ public:
             report.bytes = bytes.size();
             report.path = path;
             report.checksum = fnv1a64(bytes);
-            if (!slot.file.empty()) {
+            if (!slot.file.empty() && std::filesystem::exists(slot.file)) {
                 const auto input = read_binary_file(slot.file);
                 report.input_checksum = fnv1a64(input);
                 report.matches_input = input == bytes;
@@ -588,6 +632,7 @@ private:
             slot.loaded_words = (slot.loaded_size + 3) / 4;
             slot.loaded_last_address = slot.loaded_words == 0 ? slot.address : slot.address + static_cast<uint32_t>((slot.loaded_words - 1) * 4);
             slot.loaded_checksum = fnv1a64(slot.image);
+            slot.loaded_crc32 = crc32(slot.image);
         }
         return slot.image;
     }
@@ -663,6 +708,7 @@ private:
         slot->loaded_words = (slot->loaded_size + 3) / 4;
         slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
         slot->loaded_checksum = fnv1a64(image);
+        slot->loaded_crc32 = crc32(image);
         sync_slot_table_size(*slot);
         ++slot->target_write_requests;
         slot->target_write_bytes += length;
@@ -736,6 +782,7 @@ private:
         slot->loaded_words = (slot->loaded_size + 3) / 4;
         slot->loaded_last_address = slot->loaded_words == 0 ? slot->address : slot->address + static_cast<uint32_t>((slot->loaded_words - 1) * 4);
         slot->loaded_checksum = fnv1a64(slot->image);
+        slot->loaded_crc32 = crc32(slot->image);
         sync_slot_table_size(*slot);
         log_event("TARGET open-file id=" + std::to_string(slot_id) + " file=" + requested + " bytes=" + std::to_string(slot->loaded_size));
         return apf::kTargetOk;
@@ -753,6 +800,45 @@ private:
     static bool target_range_ok(uint64_t offset, uint64_t length, size_t size) {
         const uint64_t total = static_cast<uint64_t>(size);
         return offset <= total && length <= total - offset;
+    }
+
+    void verify_loaded_slot_readback(DataSlot& slot, const std::vector<uint8_t>& expected) {
+        slot.readback_attempted = true;
+        const auto observed = burst_read(slot.address, expected.size());
+        slot.readback_bytes = observed.size();
+        slot.readback_crc32 = crc32(observed);
+        slot.readback_checksum = fnv1a64(observed);
+        slot.readback_matches = observed == expected;
+
+        const size_t compare_size = std::min(expected.size(), observed.size());
+        for (size_t i = 0; i < compare_size; ++i) {
+            if (expected[i] == observed[i]) continue;
+            ++slot.readback_mismatch_count;
+            if (!slot.readback_has_first_mismatch) {
+                slot.readback_has_first_mismatch = true;
+                slot.readback_first_mismatch_offset = i;
+                slot.readback_expected_byte = expected[i];
+                slot.readback_observed_byte = observed[i];
+            }
+        }
+        if (observed.size() != expected.size()) {
+            slot.readback_mismatch_count += observed.size() > expected.size()
+                                                ? observed.size() - expected.size()
+                                                : expected.size() - observed.size();
+            if (!slot.readback_has_first_mismatch) {
+                slot.readback_has_first_mismatch = true;
+                slot.readback_first_mismatch_offset = compare_size;
+                slot.readback_expected_byte = compare_size < expected.size() ? expected[compare_size] : 0;
+                slot.readback_observed_byte = compare_size < observed.size() ? observed[compare_size] : 0;
+            }
+        }
+
+        log_event("DATASLOT readback id=" + std::to_string(slot.id) +
+                  " bytes=" + std::to_string(observed.size()) +
+                  " crc=" + hex32(slot.readback_crc32) +
+                  " checksum=" + hex64(slot.readback_checksum) +
+                  " matches=" + std::string(slot.readback_matches ? "true" : "false") +
+                  " mismatches=" + std::to_string(slot.readback_mismatch_count));
     }
 
     std::string read_bridge_c_string(uint32_t addr, size_t max_len) {
@@ -894,7 +980,7 @@ public:
         trace_.reset_enter_cycle = now();
         trace_.events.push_back("reset_enter");
         for (auto& slot : slots) {
-            if (!slot.file.empty() && !slot.deferload) {
+            if (!slot.file.empty() && std::filesystem::exists(slot.file)) {
                 slot.loaded_size = std::filesystem::file_size(slot.file);
             }
         }

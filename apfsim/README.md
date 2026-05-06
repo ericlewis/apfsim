@@ -58,6 +58,7 @@ cd apfsim
 bin/apfsim doctor
 bin/apfsim build --profile mock
 bin/apfsim run --profile mock --frames 2
+bin/apfsim diagnose build/profiles/mock/run
 bin/apfsim test --matrix ci
 ```
 
@@ -67,6 +68,7 @@ A passing `apfsim` run can prove that the simulated `core_top`:
 
 - accepts the expected APF boot/reset lifecycle;
 - receives data-slot payloads at configured bridge addresses;
+- optionally reads loaded slots back through the APF bridge to catch RAM/address/byte-lane corruption;
 - reaches running status;
 - handles expected host commands and target commands;
 - receives configured persistent `interact.json` writes;
@@ -76,7 +78,7 @@ A passing `apfsim` run can prove that the simulated `core_top`:
 - unloads configured nonvolatile saves;
 - produces internally consistent machine-readable artifacts.
 
-The exact proof depends on the profile and scenario expectations. Strict gates should encode expected dimensions, checksums, reset timings, audio activity, save behavior, and bridge readbacks under `expect:`.
+The exact proof depends on the profile and scenario expectations. Strict gates should encode expected dimensions, checksums, data-slot readback, reset timings, audio activity, save behavior, and bridge readbacks under `expect:`.
 
 ## What A Passing Run Does Not Prove
 
@@ -94,6 +96,118 @@ Hardware remains the final authority. `apfsim` is intended to catch integration 
 
 ## Core Workflows
 
+### Diagnose A Run
+
+Every profile run now emits a diagnostic layer on top of raw simulator artifacts:
+
+```sh
+bin/apfsim run --profile mock_port_gate
+bin/apfsim diagnose build/profiles/mock_port_gate/run --profile mock_port_gate --strict
+```
+
+The stable outputs are:
+
+- `diagnostics.json`: machine-readable APF contract failures with stable codes, evidence pointers, likely causes, and repair suggestions.
+- `bringup-report.md`: a practical human report with blocking diagnostics, recommended next action, artifact paths, and hardware-confidence summary.
+- `repair-plan.json`: optional reviewable repair suggestions from `bin/apfsim bringup --repair`.
+
+This is the first layer of the porting-intelligence workflow. The goal is for tools and generators to consume diagnostic codes like `VIDEO_WIDTH_MISMATCH`, `DATA_SLOT_LOAD_SHORT`, or `READY_TO_RUN_MISSING` instead of scraping prose logs. See [Diagnostics And Bring-Up](docs/diagnostics.md).
+
+Agents implementing full-auto bring-up should use [Full-Auto Agent Guide](docs/full-auto-agent-guide.md). It maps the stable artifact fields for video shape, first protocol failure windows, control-plane probes, input smoke, audio activity, data loading, package validation, and shim provenance.
+
+Package and summary gates:
+
+```sh
+bin/apfsim package-check --root /path/to/core-or-package --json-out output/package_check.json --strict
+bin/apfsim summarize-run output/bringup/core-name/run --json-out output/summary.json --tsv-out output/summary.tsv --strict
+```
+
+### Run A Bring-Up Corpus
+
+Use `corpus run` when a generator or maintainer wants one manifest to drive many cores through bring-up or package-only stages:
+
+```sh
+bin/apfsim corpus run \
+  --manifest output/corpus/manifest.yml \
+  --out output/corpus/run \
+  --strict
+```
+
+The public example matrix is checked in:
+
+```sh
+bin/apfsim corpus run --manifest corpus/public_examples.yml --out output/public-examples
+```
+
+It runs deterministic mock gates locally and skips official example checkouts unless their environment variables are configured.
+
+Example manifest:
+
+```yaml
+defaults:
+  frames: 60
+  timeout: 600
+  repair: true
+cores:
+  - name: mock-gate
+    profile: mock_port_gate
+    family: direct-mode
+  - name: generated-core
+    root: /path/to/openFPGA-Core
+    rom: /path/to/game.rom
+    expected_platform_id: arcade_generated
+    auto_profile: true
+    family: direct-mode
+  - name: package-only
+    root: /path/to/SD-package
+    expected_platform_id: arcade_generated
+    stop_stage: package
+```
+
+Stable outputs:
+
+- `corpus_summary.json`: aggregate pass/fail/skip totals, family counts, top blockers, and one normalized row per core.
+- `corpus_summary.tsv`: spreadsheet-friendly view of the same per-core rows.
+- `cores/<name>/run/summary.json`: the per-core run row emitted by `bringup`.
+
+Root-missing entries are skipped so local inventories can be shared. Missing ROMs/assets are preflight failures because they indicate a generator/package input problem.
+
+### Bring Up A Core
+
+`bringup` is the high-level command intended to grow into discover, profile generation, simulation, diagnosis, repair planning, and rerun:
+
+```sh
+bin/apfsim bringup \
+  --profile mock_port_gate \
+  --out output/bringup/mock_port_gate \
+  --repair \
+  --emit-patches
+```
+
+For generated candidates:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --auto-profile \
+  --rom /path/to/game.rom \
+  --out output/bringup/core-name \
+  --repair
+```
+
+For an existing generated profile, pass the package/check-out root explicitly so `{root}` placeholders resolve and package validation is included in the run directory:
+
+```sh
+bin/apfsim bringup \
+  --profile output/generated-profiles/core/core.json \
+  --root /path/to/openFPGA-Core-or-package \
+  --expected-platform-id arcade_core \
+  --out output/bringup/core \
+  --repair
+```
+
+Automatic source mutation is intentionally not performed. Repair output is patch-plan first; source patches will be emitted only by explicit repair rules.
+
 ### Run The Deterministic Mock Profile
 
 ```sh
@@ -103,6 +217,8 @@ bin/apfsim validate-artifacts build/profiles/mock_port_gate/run
 ```
 
 `mock_port_gate` is the deterministic contract gate for boot, reset, bridge, data, video, audio, input, interact, save, and artifact checks.
+
+`mock_rom_stress` is the deterministic odd-sized ROM/data-slot stress gate. It loads 1025 bytes, verifies the partial final bridge word, and reads back the APF-facing RAM window to catch byte-lane/address/endian corruption.
 
 ### Validate Official Example Integrations
 
@@ -156,6 +272,19 @@ bin/apfsim discover \
 
 Discovery reports package metadata, `core_top` candidates, HDL language mix, likely Verilator blockers, missing shims, and git cleanliness. See [Generated Profile Candidates](docs/generated-profiles.md).
 
+### Intake One Core
+
+Use intake before profile generation when you want a machine-readable source contract for one checkout:
+
+```sh
+bin/apfsim intake \
+  --root /path/to/openFPGA-Core \
+  --output output/intake/core-name \
+  --json
+```
+
+This writes `source_contract.json` and `source_contract.md`. The contract classifies the port as `direct-mode`, `shell-mode`, `family-specific`, or `architecture-block`, records the selected top, QSF/source inventory, APF port candidates, memory dependencies, package metadata, and blockers such as missing bridge/video mappings, VHDL entities, or external RAM model requirements.
+
 ### Generate A Profile Candidate
 
 ```sh
@@ -166,6 +295,29 @@ bin/apfsim generate-profile \
 ```
 
 Generated profiles are review artifacts, not trusted production gates. Review the generated filelist, scenario, notes, shim substitutions, and expected artifacts before copying anything into `profiles/`.
+
+### Synthesize An APF Wrapper
+
+Use `synth-wrapper` when a checkout has a useful source top but not a Verilator-ready APF `core_top` contract:
+
+```sh
+bin/apfsim synth-wrapper \
+  --root /path/to/openFPGA-Core \
+  --output output/synth-wrapper \
+  --json
+```
+
+This emits a reviewable `core_top` wrapper, profile, filelist, scenario, `NOTES.md`, `source_contract.json`, and `wrapper_synthesis.json`. The reports record source classification, inferred APF mappings, confidence, and blockers such as missing bridge, video, audio, or memory mappings. It is a starting hypothesis, not a silent source patch.
+
+`bringup` can use the same path directly:
+
+```sh
+bin/apfsim bringup \
+  --root /path/to/openFPGA-Core \
+  --synth-wrapper \
+  --out output/bringup/core \
+  --explain
+```
 
 ### Compare Simulated Video Shape With `video.json`
 
@@ -184,6 +336,13 @@ Use this when generated `video.json` says one size but simulated APF output prov
 A run writes a stable artifact directory. Important files:
 
 - `result.json`: top-level run status, phase status, boot/data/bridge/video/audio/input/save summaries.
+- `diagnostics.json`: stable APF contract diagnostics with evidence and repair suggestions.
+- `bringup-report.md`: human-readable bring-up summary.
+- `repair-plan.json`: optional reviewable repair suggestions from `bringup --repair`.
+- `package_check.json`: package metadata and SD-card path validation.
+- `summary.json` / `summary.tsv`: normalized one-row output for corpus and generator consumption.
+- `corpus_summary.json` / `corpus_summary.tsv`: aggregate output from `corpus run`.
+- `source_provenance.json.memory_dependencies`: detected SDRAM/SRAM/CRAM/PSRAM/BRAM/FIFO needs and model confidence.
 - `video_shape.json`: APF-facing runtime video contract.
 - `lifecycle.json`: APF boot/reset/data/RTC/Ready-to-Run/running cycle markers.
 - `bridge.log`: human-readable APF command and data-slot flow.
@@ -208,6 +367,9 @@ Public profiles live in `profiles/*.json`.
 | `mock_port_gate` | Strict built-in APF contract gate. |
 | `mock_target_commands` | Runtime target data-slot/read/write/flush/filename/open-file/debug-event regression. |
 | `mock_lifecycle` | Host lifecycle injection regression for OS notify, data-slot update, and savestate save/query. |
+| `mock_memory_activity` | Standard memory counter port capture regression. |
+| `mock_external_sram` | ROM data-slot load through the public async SRAM model with bridge readback verification. |
+| `mock_external_sram_corrupt` | Negative fixture that deliberately corrupts a SRAM byte lane so readback diagnostics must fire. |
 | `core_template` | Official `open-fpga/core-template` smoke profile. |
 | `interact` | Official `open-fpga/core-example-interact` settings/profile smoke. |
 | `kbmouse_targetdata` | Official `open-fpga/core-example-kbmouse-targetdata` controller and target-data smoke. |
@@ -285,6 +447,7 @@ If a core uses different names or widths, add a thin simulation wrapper and set 
 - [Runtime Video Contract Discovery](docs/video-shape.md)
 - [Generated Profile Candidates](docs/generated-profiles.md)
 - [Shim And Substitution Catalog](docs/shim-catalog.md)
+- [Memory Dependencies And External RAM](docs/memory.md)
 - [Log-Derived APF Runtime Flows](docs/log-derived-flows.md)
 - [Public Readiness Notes](docs/public-readiness.md)
 
